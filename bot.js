@@ -1,8 +1,12 @@
-const ytdl = require('ytdl-core'); // Đảm bảo đã cập nhật
-const { joinVoiceChannel, createAudioPlayer, createAudioResource } = require('@discordjs/voice');
-const { Client, GatewayIntentBits } = require('discord.js');
+const { google } = require('googleapis');
+const ytStream = require('yt-stream');
+const { Client, GatewayIntentBits, SlashCommandBuilder, ButtonBuilder, ButtonStyle, ActionRowBuilder } = require('discord.js');
+const { REST } = require('@discordjs/rest');
+const { Routes } = require('discord-api-types/v9');
+const { joinVoiceChannel, createAudioPlayer, createAudioResource, AudioPlayerStatus } = require('@discordjs/voice');
 require('dotenv').config();
 
+// Initialize Discord client and YouTube API
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
@@ -12,56 +16,261 @@ const client = new Client({
     ],
 });
 
-client.once('ready', () => {
-    console.log(`Bot đã sẵn sàng với tên: ${client.user.tag}`);
+const queue = new Map();
+
+// Configure YouTube API
+const youtube = google.youtube({
+    version: 'v3',
+    auth: process.env.YOUTUBE_API_KEY, // Add your API key
 });
 
-client.on('messageCreate', async (message) => {
-    if (message.author.bot) return;
+// Register slash commands
+const commands = [
+    new SlashCommandBuilder()
+        .setName('play')
+        .setDescription('Play music from YouTube. Supports multiple links or song names separated by commas.')
+        .addStringOption(option =>
+            option
+                .setName('url')
+                .setDescription('YouTube link or song name.')
+                .setRequired(true)
+        ),
+].map(command => command.toJSON());
 
-    const args = message.content.split(' ');
-    const command = args.shift().toLowerCase();
+const rest = new REST({ version: '9' }).setToken(process.env.DISCORD_TOKEN);
 
-    if (command === '%play') {
-        if (!args[0]) {
-            return message.reply('Vui lòng cung cấp liên kết YouTube!');
+(async () => {
+    try {
+        console.log('🔄 Registering slash commands...');
+        await rest.put(
+            Routes.applicationCommands(process.env.CLIENT_ID),
+            { body: commands }
+        );
+        console.log('✅ Slash commands registered!');
+    } catch (error) {
+        console.error('❌ Error registering slash commands:', error);
+    }
+})();
+
+client.once('ready', () => {
+    console.log(`✅ Bot is ready as: ${client.user.tag}`);
+});
+
+client.on('interactionCreate', async interaction => {
+    if (interaction.isCommand() && interaction.commandName === 'play') {
+        await handlePlayCommand(interaction);
+    } else if (interaction.isButton()) {
+        await handleButtonInteraction(interaction);
+    }
+});
+
+async function handlePlayCommand(interaction) {
+    const input = interaction.options.getString('url');
+    const inputs = input.split(',').map(i => i.trim()).filter(Boolean);
+    const { guildId, member } = interaction;
+    const voiceChannel = member.voice.channel;
+
+    if (!voiceChannel) {
+        return interaction.reply('⚠️ You need to join a voice channel first!');
+    }
+
+    const permissions = voiceChannel.permissionsFor(interaction.client.user);
+    if (!permissions.has('Connect') || !permissions.has('Speak')) {
+        return interaction.reply('⚠️ I need permissions to join and speak in your voice channel!');
+    }
+
+    const serverQueue = queue.get(guildId);
+    const songs = [];
+
+    for (const query of inputs) {
+        if (!query) continue;
+        try {
+            let songInfo;
+
+            if (query.startsWith('http')) {
+                const videoId = query.split('v=')[1].split('&')[0];
+                songInfo = await youtube.videos.list({
+                    part: 'snippet,contentDetails',
+                    id: videoId,
+                });
+                const video = songInfo.data.items[0];
+                const streamInfo = await ytStream.stream(query);
+                songs.push({
+                    title: video.snippet.title || query,
+                    url: query,
+                    stream: streamInfo.stream,
+                    type: streamInfo.type,
+                });
+            } else {
+                const searchResult = await youtube.search.list({
+                    part: 'snippet',
+                    q: query,
+                    maxResults: 1,
+                    type: 'video',
+                });
+
+                if (searchResult.data.items.length > 0) {
+                    const video = searchResult.data.items[0];
+                    const streamInfo = await ytStream.stream(`https://www.youtube.com/watch?v=${video.id.videoId}`);
+                    songs.push({
+                        title: video.snippet.title,
+                        url: `https://www.youtube.com/watch?v=${video.id.videoId}`,
+                        stream: streamInfo.stream,
+                        type: streamInfo.type,
+                    });
+                } else {
+                    interaction.channel.send(`❌ No songs found for: "${query}"`);
+                    continue;
+                }
+            }
+        } catch (error) {
+            console.error(`❌ Error processing input "${query}":`, error);
         }
+    }
 
-        const voiceChannel = message.member.voice.channel;
-        if (!voiceChannel) {
-            return message.reply('Bạn cần tham gia kênh thoại để phát nhạc!');
-        }
+    if (songs.length === 0) {
+        return interaction.reply('❌ No valid songs found in the list.');
+    }
 
-        const permissions = voiceChannel.permissionsFor(message.client.user);
-        if (!permissions.has('Connect') || !permissions.has('Speak')) {
-            return message.reply('Bot không có quyền kết nối hoặc phát nhạc trong kênh này!');
-        }
+    if (!serverQueue) {
+        const queueConstruct = {
+            voiceChannel,
+            connection: null,
+            songs: [],
+            player: createAudioPlayer(),
+        };
+
+        queue.set(guildId, queueConstruct);
+        queueConstruct.songs.push(...songs);
 
         try {
             const connection = joinVoiceChannel({
                 channelId: voiceChannel.id,
-                guildId: message.guild.id,
-                adapterCreator: message.guild.voiceAdapterCreator,
+                guildId,
+                adapterCreator: interaction.guild.voiceAdapterCreator,
             });
 
-            const stream = ytdl(args[0], { filter: 'audioonly', quality: 'highestaudio' });
-            const resource = createAudioResource(stream);
-            const player = createAudioPlayer();
+            queueConstruct.connection = connection;
+            connection.subscribe(queueConstruct.player);
 
-            player.play(resource);
-            connection.subscribe(player);
-
-            player.on('error', (error) => {
-                console.error('Lỗi phát nhạc:', error);
-                message.channel.send('Đã xảy ra lỗi khi phát nhạc.');
-            });
-
-            message.reply(`🎶 Đang phát: ${args[0]}`);
+            playNextSong(guildId, interaction);
+            interaction.reply(`🎶 Added ${songs.length} songs to the queue.`);
         } catch (error) {
-            console.error('Lỗi khi phát nhạc:', error);
-            message.reply('Không thể phát nhạc. Đảm bảo rằng liên kết YouTube hợp lệ.');
+            console.error('❌ Error connecting to voice channel:', error);
+            queue.delete(guildId);
+            return interaction.reply('❌ Unable to connect to voice channel!');
         }
+    } else {
+        serverQueue.songs.push(...songs);
+        interaction.reply(`🎶 Added ${songs.length} songs to the queue.`);
     }
-});
+}
 
-client.login(process.env.DISCORD_TOKEN);
+async function handleButtonInteraction(interaction) {
+    const { guildId } = interaction;
+    const serverQueue = queue.get(guildId);
+
+    if (!serverQueue) {
+        return interaction.reply({ content: '🔇 The queue is empty.', ephemeral: true });
+    }
+
+    const action = interaction.customId;
+
+    switch (action) {
+        case 'skip':
+            serverQueue.player.stop();
+            interaction.reply('⏭️ Skipping to the next song!');
+            break;
+
+        case 'pause':
+            serverQueue.player.pause();
+            interaction.reply('⏸️ Paused the current song.');
+            break;
+
+        case 'resume':
+            serverQueue.player.unpause();
+            interaction.reply('▶️ Resumed playing the current song.');
+            break;
+
+        case 'queue_list': {
+            // Lấy số trang từ nội dung nút hoặc mặc định là 1
+            const page = parseInt(interaction.message?.components?.[0]?.components?.[0]?.label.split(' ')[1]) || 1;
+            const songsPerPage = 5;
+            const start = (page - 1) * songsPerPage;
+            const end = start + songsPerPage;
+
+            const songList = serverQueue.songs.slice(start, end).map((song, index) => `${start + index + 1}. ${song.title}`).join('\n');
+
+            const totalPages = Math.ceil(serverQueue.songs.length / songsPerPage);
+
+            const row = new ActionRowBuilder()
+                .addComponents(
+                    new ButtonBuilder().setCustomId('prev_page').setLabel('⬅️ Previous').setStyle(ButtonStyle.Secondary).setDisabled(page === 1),
+                    new ButtonBuilder().setCustomId('next_page').setLabel('➡️ Next').setStyle(ButtonStyle.Secondary).setDisabled(page === totalPages)
+                );
+
+            interaction.update({
+                content: `🎶 Song list (Page ${page}/${totalPages}):\n${songList || 'No songs available.'}`,
+                components: [row],
+            });
+            break;
+        }
+
+        case 'prev_page': {
+            const currentPage = parseInt(interaction.message?.content.match(/Page (\d+)/)?.[1]) || 1;
+            const prevPage = Math.max(1, currentPage - 1);
+            interaction.customId = 'queue_list';
+            interaction.message.components[0].components[0].label = `Page ${prevPage}`;
+            handleButtonInteraction(interaction);
+            break;
+        }
+
+        case 'next_page': {
+            const currentPage = parseInt(interaction.message?.content.match(/Page (\d+)/)?.[1]) || 1;
+            const nextPage = currentPage + 1;
+            interaction.customId = 'queue_list';
+            interaction.message.components[0].components[0].label = `Page ${nextPage}`;
+            handleButtonInteraction(interaction);
+            break;
+        }
+
+        default:
+            interaction.reply({ content: '⚠️ Invalid interaction.', ephemeral: true });
+    }
+}
+
+function playNextSong(guildId, interaction) {
+    const serverQueue = queue.get(guildId);
+
+    if (!serverQueue || serverQueue.songs.length === 0) {
+        //if (serverQueue?.connection) {
+            //serverQueue.connection.destroy();
+        //}
+        queue.delete(guildId);
+        return;
+    }
+
+    const currentSong = serverQueue.songs[0];
+    const resource = createAudioResource(currentSong.stream, { inputType: currentSong.type });
+    serverQueue.player.play(resource);
+
+    const row = new ActionRowBuilder()
+        .addComponents(
+            new ButtonBuilder().setCustomId('skip').setLabel('⏭️ Bỏ qua').setStyle(ButtonStyle.Primary),
+            new ButtonBuilder().setCustomId('pause').setLabel('⏸️ Tạm dừng').setStyle(ButtonStyle.Secondary),
+            new ButtonBuilder().setCustomId('resume').setLabel('▶️ Tiếp tục').setStyle(ButtonStyle.Success),
+            new ButtonBuilder().setCustomId('queue_list').setLabel('🎶 Danh sách bài hát').setStyle(ButtonStyle.Secondary)
+        );
+
+    interaction.channel.send({
+        content: `🎵 Tao đang hát cho chúng mày nghe bài: ${currentSong.title}`,
+        components: [row],
+    });
+
+    serverQueue.player.once(AudioPlayerStatus.Idle, () => {
+        serverQueue.songs.shift();
+        playNextSong(guildId, interaction);
+    });
+}
+
+client.login(process.env.DISCORD_TOKEN); 
