@@ -79,14 +79,39 @@ async function handlePlayCommand(interaction) {
         return interaction.reply('⚠️ I need permissions to join and speak in your voice channel!');
     }
 
-    const serverQueue = queue.get(guildId);
+    let serverQueue = queue.get(guildId);
+    if (!serverQueue || !serverQueue.connection) {
+        serverQueue = {
+            voiceChannel,
+            connection: null,
+            songs: [],
+            player: createAudioPlayer(),
+        };
+
+        queue.set(guildId, serverQueue);
+
+        try {
+            const connection = joinVoiceChannel({
+                channelId: voiceChannel.id,
+                guildId,
+                adapterCreator: interaction.guild.voiceAdapterCreator,
+            });
+
+            serverQueue.connection = connection;
+            connection.subscribe(serverQueue.player);
+        } catch (error) {
+            console.error('❌ Error connecting to voice channel:', error);
+            queue.delete(guildId);
+            return interaction.reply('❌ Unable to connect to voice channel!');
+        }
+    }
+
     const songs = [];
 
     for (const query of inputs) {
         if (!query) continue;
         try {
             let songInfo;
-
             if (query.startsWith('http')) {
                 const videoId = query.split('v=')[1].split('&')[0];
                 songInfo = await youtube.videos.list({
@@ -132,39 +157,15 @@ async function handlePlayCommand(interaction) {
         return interaction.reply('❌ No valid songs found in the list.');
     }
 
-    if (!serverQueue) {
-        const queueConstruct = {
-            voiceChannel,
-            connection: null,
-            songs: [],
-            player: createAudioPlayer(),
-        };
+    serverQueue.songs.push(...songs);
 
-        queue.set(guildId, queueConstruct);
-        queueConstruct.songs.push(...songs);
-
-        try {
-            const connection = joinVoiceChannel({
-                channelId: voiceChannel.id,
-                guildId,
-                adapterCreator: interaction.guild.voiceAdapterCreator,
-            });
-
-            queueConstruct.connection = connection;
-            connection.subscribe(queueConstruct.player);
-
-            playNextSong(guildId, interaction);
-            interaction.reply(`🎶 Added ${songs.length} songs to the queue.`);
-        } catch (error) {
-            console.error('❌ Error connecting to voice channel:', error);
-            queue.delete(guildId);
-            return interaction.reply('❌ Unable to connect to voice channel!');
-        }
-    } else {
-        serverQueue.songs.push(...songs);
-        interaction.reply(`🎶 Added ${songs.length} songs to the queue.`);
+    if (serverQueue.songs.length === songs.length) {
+        playNextSong(guildId, interaction);
     }
+
+    interaction.reply(`🎶 Added ${songs.length} songs to the queue.`);
 }
+
 
 async function handleButtonInteraction(interaction) {
     const { guildId } = interaction;
