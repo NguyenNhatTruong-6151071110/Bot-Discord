@@ -74,23 +74,24 @@ client.once('ready', () => {
 });
 
 client.on('interactionCreate', async interaction => {
-    if (!interaction.isCommand()) return;
+    if (interaction.isCommand()) {
+        const { commandName } = interaction;
 
-    const { commandName } = interaction;
-
-    if (commandName === 'play') {
-        await handlePlayCommand(interaction);
-    } else if (commandName === 'skip') {
-        await handleSkipCommand(interaction);
-    } else if (commandName === 'pause') {
-        await handlePauseCommand(interaction);
-    } else if (commandName === 'resume') {
-        await handleResumeCommand(interaction);
-    } else if (commandName === 'list') {
-        await handleListCommand(interaction);
+        if (commandName === 'play') {
+            await handlePlayCommand(interaction);
+        } else if (commandName === 'skip') {
+            await handleSkipCommand(interaction);
+        } else if (commandName === 'pause') {
+            await handlePauseCommand(interaction);
+        } else if (commandName === 'resume') {
+            await handleResumeCommand(interaction);
+        } else if (commandName === 'list') {
+            await handleListCommand(interaction);
+        }
+    } else if (interaction.isButton()) {
+        await handleButtonInteraction(interaction);
     }
 });
-
 
 async function handlePlayCommand(interaction) {
     const input = interaction.options.getString('url');
@@ -240,6 +241,7 @@ async function handleListCommand(interaction) {
 
     interaction.reply(`🎶 Danh sách bài hát:\n${songList}`);
 }
+
 
 async function handleButtonInteraction(interaction) {
     const { guildId } = interaction;
