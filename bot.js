@@ -35,6 +35,22 @@ const commands = [
                 .setDescription('YouTube link or song name.')
                 .setRequired(true)
         ),
+
+    new SlashCommandBuilder()
+        .setName('skip')
+        .setDescription('Skip to the next song in the queue.'),
+
+    new SlashCommandBuilder()
+        .setName('pause')
+        .setDescription('Pause the current song.'),
+
+    new SlashCommandBuilder()
+        .setName('resume')
+        .setDescription('Resume playing the paused song.'),
+
+    new SlashCommandBuilder()
+        .setName('list')
+        .setDescription('Show the current queue of songs.'),
 ].map(command => command.toJSON());
 
 const rest = new REST({ version: '9' }).setToken(process.env.DISCORD_TOKEN);
@@ -52,17 +68,29 @@ const rest = new REST({ version: '9' }).setToken(process.env.DISCORD_TOKEN);
     }
 })();
 
+
 client.once('ready', () => {
     console.log(`✅ Bot is ready as: ${client.user.tag}`);
 });
 
 client.on('interactionCreate', async interaction => {
-    if (interaction.isCommand() && interaction.commandName === 'play') {
+    if (!interaction.isCommand()) return;
+
+    const { commandName } = interaction;
+
+    if (commandName === 'play') {
         await handlePlayCommand(interaction);
-    } else if (interaction.isButton()) {
-        await handleButtonInteraction(interaction);
+    } else if (commandName === 'skip') {
+        await handleSkipCommand(interaction);
+    } else if (commandName === 'pause') {
+        await handlePauseCommand(interaction);
+    } else if (commandName === 'resume') {
+        await handleResumeCommand(interaction);
+    } else if (commandName === 'list') {
+        await handleListCommand(interaction);
     }
 });
+
 
 async function handlePlayCommand(interaction) {
     const input = interaction.options.getString('url');
@@ -165,7 +193,53 @@ async function handlePlayCommand(interaction) {
 
     interaction.reply(`🎶 Added ${songs.length} songs to the queue.`);
 }
+async function handleSkipCommand(interaction) {
+    const { guildId } = interaction;
+    const serverQueue = queue.get(guildId);
 
+    if (!serverQueue || serverQueue.songs.length === 0) {
+        return interaction.reply('🔇 Không có bài hát nào để bỏ qua.');
+    }
+
+    serverQueue.player.stop();
+    interaction.reply('⏭️ Đã bỏ qua bài hát hiện tại!');
+}
+async function handlePauseCommand(interaction) {
+    const { guildId } = interaction;
+    const serverQueue = queue.get(guildId);
+
+    if (!serverQueue || serverQueue.songs.length === 0) {
+        return interaction.reply('🔇 Không có bài hát nào để tạm dừng.');
+    }
+
+    serverQueue.player.pause();
+    interaction.reply('⏸️ Đã tạm dừng bài hát.');
+}
+async function handleResumeCommand(interaction) {
+    const { guildId } = interaction;
+    const serverQueue = queue.get(guildId);
+
+    if (!serverQueue || serverQueue.songs.length === 0) {
+        return interaction.reply('🔇 Không có bài hát nào để tiếp tục phát.');
+    }
+
+    serverQueue.player.unpause();
+    interaction.reply('▶️ Đã tiếp tục phát bài hát.');
+}
+async function handleListCommand(interaction) {
+    const { guildId } = interaction;
+    const serverQueue = queue.get(guildId);
+
+    if (!serverQueue || serverQueue.songs.length === 0) {
+        return interaction.reply('📭 Hàng đợi trống.');
+    }
+
+    const songList = serverQueue.songs
+        .map((song, index) => `${index + 1}. ${song.title}`)
+        .join('\n');
+
+    interaction.reply(`🎶 Danh sách bài hát:\n${songList}`);
+}
 
 async function handleButtonInteraction(interaction) {
     const { guildId } = interaction;
