@@ -100,16 +100,23 @@ async function handlePlayCommand(interaction) {
     const voiceChannel = member.voice.channel;
 
     if (!voiceChannel) {
-        return interaction.reply('⚠️ You need to join a voice channel first!');
+        return interaction.reply('⚠️ Bạn cần tham gia một kênh thoại trước!');
     }
 
     const permissions = voiceChannel.permissionsFor(interaction.client.user);
     if (!permissions.has('Connect') || !permissions.has('Speak')) {
-        return interaction.reply('⚠️ I need permissions to join and speak in your voice channel!');
+        return interaction.reply('⚠️ Tôi cần quyền kết nối và nói trong kênh thoại này!');
     }
 
     let serverQueue = queue.get(guildId);
-    if (!serverQueue || !serverQueue.connection) {
+
+    // Kiểm tra nếu bot đã bị kick, xóa hàng đợi cũ để đảm bảo bot có thể vào lại
+    if (serverQueue && !voiceChannel.members.has(client.user.id)) {
+        queue.delete(guildId);
+        serverQueue = null;
+    }
+
+    if (!serverQueue) {
         serverQueue = {
             voiceChannel,
             connection: null,
@@ -124,14 +131,16 @@ async function handlePlayCommand(interaction) {
                 channelId: voiceChannel.id,
                 guildId,
                 adapterCreator: interaction.guild.voiceAdapterCreator,
+                selfDeaf: false, // Không tự động mute bot
+                selfMute: false, // Không tự động tắt mic
             });
 
             serverQueue.connection = connection;
             connection.subscribe(serverQueue.player);
         } catch (error) {
-            console.error('❌ Error connecting to voice channel:', error);
+            console.error('❌ Lỗi khi kết nối lại kênh thoại:', error);
             queue.delete(guildId);
-            return interaction.reply('❌ Unable to connect to voice channel!');
+            return interaction.reply('❌ Không thể kết nối lại kênh thoại!');
         }
     }
 
@@ -173,17 +182,17 @@ async function handlePlayCommand(interaction) {
                         type: streamInfo.type,
                     });
                 } else {
-                    interaction.channel.send(`❌ No songs found for: "${query}"`);
+                    interaction.channel.send(`❌ Không tìm thấy bài hát nào cho: "${query}"`);
                     continue;
                 }
             }
         } catch (error) {
-            console.error(`❌ Error processing input "${query}":`, error);
+            console.error(`❌ Lỗi khi xử lý input "${query}":`, error);
         }
     }
 
     if (songs.length === 0) {
-        return interaction.reply('❌ No valid songs found in the list.');
+        return interaction.reply('❌ Không có bài hát hợp lệ nào trong danh sách.');
     }
 
     serverQueue.songs.push(...songs);
@@ -192,8 +201,9 @@ async function handlePlayCommand(interaction) {
         playNextSong(guildId, interaction);
     }
 
-    interaction.reply(`🎶 Added ${songs.length} songs to the queue.`);
+    interaction.reply(`🎶 Đã thêm ${songs.length} bài hát vào danh sách.`);
 }
+
 async function handleSkipCommand(interaction) {
     const { guildId } = interaction;
     const serverQueue = queue.get(guildId);
