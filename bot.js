@@ -5,7 +5,7 @@ const { REST } = require('@discordjs/rest');
 const { Routes } = require('discord-api-types/v9');
 const { joinVoiceChannel, createAudioPlayer, createAudioResource, AudioPlayerStatus } = require('@discordjs/voice');
 const googleTTS = require('google-tts-api');
-const ytdl = require('ytdl-core');
+const play = require('play-dl');
 require('dotenv').config();
 
 // Initialize Discord client and YouTube API
@@ -139,58 +139,30 @@ client.on('interactionCreate', async interaction => {
 });
 
 async function handleLofiCommand(interaction) {
-    const { guildId, member } = interaction;
-    const voiceChannel = member.voice.channel;
-
-    if (!voiceChannel) {
-        return interaction.reply('⚠️ Bạn cần tham gia một kênh thoại trước!');
-    }
-
-    let serverQueue = queue.get(guildId);
-
-    // Nếu bot đã bị kick khỏi kênh, reset lại hàng đợi
-    if (serverQueue && !voiceChannel.members.has(client.user.id)) {
-        queue.delete(guildId);
-        serverQueue = null;
-    }
-
-    if (!serverQueue) {
-        serverQueue = {
-            voiceChannel,
-            connection: null,
-            songs: [],
-            player: createAudioPlayer(),
-        };
-
-        queue.set(guildId, serverQueue);
-
-        try {
-            const connection = joinVoiceChannel({
-                channelId: voiceChannel.id,
-                guildId,
-                adapterCreator: interaction.guild.voiceAdapterCreator,
-                selfDeaf: false,
-                selfMute: false,
-            });
-
-            serverQueue.connection = connection;
-            connection.subscribe(serverQueue.player);
-        } catch (error) {
-            console.error('❌ Lỗi khi kết nối kênh thoại:', error);
-            queue.delete(guildId);
-            return interaction.reply('❌ Không thể kết nối kênh thoại!');
-        }
-    }
-
     try {
-        const stream = ytdl(STREAM_URL, { filter: 'audioonly', highWaterMark: 1 << 25 });
-        const resource = createAudioResource(stream);
-        serverQueue.player.play(resource);
+        if (!interaction.member.voice.channel) {
+            return interaction.reply({ content: 'Bạn cần tham gia kênh thoại trước!', ephemeral: true });
+        }
 
-        interaction.reply('🎶 Đang phát nhạc Lofi 24/7!');
+        await interaction.deferReply();
+
+        const connection = joinVoiceChannel({
+            channelId: interaction.member.voice.channel.id,
+            guildId: interaction.guild.id,
+            adapterCreator: interaction.guild.voiceAdapterCreator,
+        });
+
+        const stream = await play.stream('https://www.youtube.com/watch?v=jfKfPfyJRdk');
+        const resource = createAudioResource(stream.stream, { inputType: stream.type });
+        const player = createAudioPlayer();
+
+        player.play(resource);
+        connection.subscribe(player);
+
+        interaction.followUp('🎵 Đang phát Lofi 24/24!');
     } catch (error) {
-        console.error('❌ Lỗi khi phát Lofi:', error);
-        return interaction.reply('❌ Không thể phát nhạc Lofi.');
+        console.error('Lỗi khi xử lý lệnh lofi:', error);
+        interaction.followUp('❌ Đã xảy ra lỗi khi phát nhạc lofi.');
     }
 }
 
