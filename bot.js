@@ -19,6 +19,9 @@ const client = new Client({
 
 const queue = new Map();
 
+// Lưu điểm của người chơi
+const userPoints = {};
+
 // Configure YouTube API
 const youtube = google.youtube({
     version: 'v3',
@@ -59,6 +62,23 @@ const commands = [
             option.setName('input')
                 .setDescription('Nội dung bạn muốn bot đọc')
                 .setRequired(true)
+        ),
+    new SlashCommandBuilder()
+        .setName('taixiu')
+        .setDescription('Chơi tài xỉu')
+        .addStringOption(option =>
+            option.setName('bet')
+                .setDescription('Chọn Tài hoặc Xỉu')
+                .setRequired(true)
+                .addChoices(
+                    { name: 'Tài', value: 'tai' },
+                    { name: 'Xỉu', value: 'xiu' }
+                )
+        )
+        .addIntegerOption(option =>
+            option.setName('amount')
+                .setDescription('Số tiền cược')
+                .setRequired(true)
         )
 ].map(command => command.toJSON());
 
@@ -98,6 +118,8 @@ client.on('interactionCreate', async interaction => {
             await handleListCommand(interaction);
         } else if (commandName === 'say') {
             await handleTTSCommand(interaction);
+        } else if (commandName === 'taixiu') {
+            await handleTaiXiuCommand(interaction);
         }
     } else if (interaction.isButton()) {
         await handleButtonInteraction(interaction);
@@ -296,6 +318,45 @@ async function handleTTSCommand(interaction) {
         console.error(error);
         await interaction.reply('❌ Lỗi khi phát TTS.');
     }
+}
+
+async function handleTaiXiuCommand(interaction) {
+    const userId = interaction.user.id;
+    const betChoice = interaction.options.getString('bet');
+    const betAmount = interaction.options.getInteger('amount');
+
+    // Kiểm tra điểm của người chơi
+    if (!userPoints[userId]) {
+        userPoints[userId] = 1000; // Mặc định có 1000 điểm
+    }
+
+    if (betAmount <= 0 || betAmount > userPoints[userId]) {
+        await interaction.reply('❌ Bạn không có đủ điểm để cược hoặc nhập số tiền cược không hợp lệ!');
+        return;
+    }
+
+    // Tung xúc xắc
+    const dice1 = Math.floor(Math.random() * 6) + 1;
+    const dice2 = Math.floor(Math.random() * 6) + 1;
+    const dice3 = Math.floor(Math.random() * 6) + 1;
+    const total = dice1 + dice2 + dice3;
+
+    const result = total >= 11 ? 'tai' : 'xiu';
+    let message = `🎲 Kết quả: ${dice1} + ${dice2} + ${dice3} = **${total}** → ${result === 'tai' ? '🔴 Tài' : '🔵 Xỉu'}`;
+
+    if (betChoice === result) {
+        userPoints[userId] += betAmount;
+        message += `
+🎉 Bạn thắng! +${betAmount} điểm
+💰 Số dư hiện tại: ${userPoints[userId]} điểm`;
+    } else {
+        userPoints[userId] -= betAmount;
+        message += `
+😢 Bạn thua! -${betAmount} điểm
+💰 Số dư hiện tại: ${userPoints[userId]} điểm`;
+    }
+
+    await interaction.reply(message);
 }
 
 async function handleButtonInteraction(interaction) {
