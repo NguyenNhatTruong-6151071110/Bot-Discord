@@ -22,6 +22,8 @@ const queue = new Map();
 
 // Lưu điểm của người chơi
 const userPoints = {};
+// Lưu 2 từ cuối của tin nhắn trước
+let lastTwoWords = null;
 
 //lofi
 const STREAM_URL = "https://www.youtube.com/watch?v=jfKfPfyJRdk";
@@ -63,6 +65,7 @@ const commands = [
     new SlashCommandBuilder()
         .setName('list')
         .setDescription('Show the current queue of songs.'),
+
     new SlashCommandBuilder()
         .setName('say')
         .setDescription('Bot say')
@@ -71,6 +74,7 @@ const commands = [
                 .setDescription('Nội dung bạn muốn bot đọc')
                 .setRequired(true)
         ),
+
     new SlashCommandBuilder()
         .setName('taixiu')
         .setDescription('Chơi tài xỉu')
@@ -87,7 +91,21 @@ const commands = [
             option.setName('amount')
                 .setDescription('Số tiền cược')
                 .setRequired(true)
-        )
+        ),
+        new SlashCommandBuilder()
+        .setName("noichu")
+        .setDescription("Nối chữ theo quy tắc!")
+        .addStringOption((option) =>
+            option
+                .setName("input")
+                .setDescription("Nhập từ ghép của bạn")
+                .setRequired(true)
+        ),
+
+    new SlashCommandBuilder()
+        .setName("diem")
+        .setDescription("Xem điểm của bạn"),
+
 ].map(command => command.toJSON());
 
 const rest = new REST({ version: '9' }).setToken(process.env.DISCORD_TOKEN);
@@ -130,6 +148,10 @@ client.on('interactionCreate', async interaction => {
             await handleTaiXiuCommand(interaction);
         } else if (commandName ==='lofi'){
             await handleLofiCommand(interaction);
+        } else if (commandName === 'noichu'){
+            await handleNoichuCommand(interaction);
+        } else if (commandName === 'diem'){
+            await handleDiemCommand(interaction);
         }
     } else if (interaction.isButton()) {
         await handleButtonInteraction(interaction);
@@ -138,6 +160,54 @@ client.on('interactionCreate', async interaction => {
     
 });
 
+// Xử lý lệnh /noichu
+async function handleNoiChuCommand(interaction) {
+    const input = interaction.options.getString("input").trim();
+    const words = input.split(/\s+/);
+
+    if (words.length < 2) {
+        await interaction.reply("⚠ Bạn cần nhập ít nhất 2 từ.");
+        return;
+    }
+
+    const firstTwoWords = words.slice(0, 2).join(" ");
+    if (!userPoints[interaction.user.id]) userPoints[interaction.user.id] = 1000;
+
+    if (lastTwoWords && firstTwoWords !== lastTwoWords) {
+        // Người chơi nối sai -> trừ 10 điểm
+        userPoints[interaction.user.id] -= 10;
+        await interaction.reply(
+            `❌ Sai! Bạn bị trừ 10 điểm. Điểm hiện tại: ${userPoints[interaction.user.id]}`
+        );
+    } else {
+        // Bot kiểm tra xem có thể nối tiếp không
+        if (!canBotContinue(words.slice(-2))) {
+            // Nếu bot không thể nối -> Cộng 10 điểm cho người chơi
+            userPoints[interaction.user.id] += 10;
+            await interaction.reply(
+                `🤖 Bot không thể nối tiếp! Bạn được cộng 10 điểm. Điểm hiện tại: ${userPoints[interaction.user.id]}`
+            );
+        } else {
+            await interaction.reply(`✅ Hợp lệ! Tiếp tục nào!`);
+        }
+    }
+
+    lastTwoWords = words.slice(-2).join(" ");
+}
+
+// Hàm kiểm tra xem bot có thể nối tiếp không
+function canBotContinue(lastWords) {
+    // Ở phiên bản này, bot không có danh sách từ để nối tiếp -> Luôn thất bại
+    return false;
+}
+
+// Xử lý lệnh /diem
+async function handleDiemCommand(interaction) {
+    const points = userPoints[interaction.user.id] || 1000;
+    await interaction.reply(`🎯 Điểm của bạn: ${points}`);
+}
+
+//mo nhac lofi
 async function handleLofiCommand(interaction) {
     try {
         if (!interaction.member.voice.channel) {
@@ -166,6 +236,81 @@ async function handleLofiCommand(interaction) {
     }
 }
 
+//nho bot noi chuyen
+async function handleTTSCommand(interaction) {
+    const text = interaction.options.getString('input');
+    if (!text) {
+        await interaction.reply('❌ Vui lòng nhập nội dung để đọc!');
+        return;
+    }
+
+    const voiceChannel = interaction.member.voice.channel;
+    if (!voiceChannel) {
+        await interaction.reply('❌ Bạn cần tham gia một kênh thoại trước!');
+        return;
+    }
+
+    try {
+        const url = googleTTS.getAudioUrl(text, { lang: 'vi', slow: false });
+        const connection = joinVoiceChannel({
+            channelId: voiceChannel.id,
+            guildId: voiceChannel.guild.id,
+            adapterCreator: voiceChannel.guild.voiceAdapterCreator,
+        });
+
+        const player = createAudioPlayer();
+        const resource = createAudioResource(url);
+        player.play(resource);
+        connection.subscribe(player);
+
+        await interaction.reply(`🔊 Đọc: "${text}"`);
+    } catch (error) {
+        console.error(error);
+        await interaction.reply('❌ Lỗi khi phát TTS.');
+    }
+}
+
+// game tai xiu
+async function handleTaiXiuCommand(interaction) {
+    const userId = interaction.user.id;
+    const betChoice = interaction.options.getString('bet');
+    const betAmount = interaction.options.getInteger('amount');
+
+    // Kiểm tra điểm của người chơi
+    if (!userPoints[userId]) {
+        userPoints[userId] = 1000; // Mặc định có 1000 điểm
+    }
+
+    if (betAmount <= 0 || betAmount > userPoints[userId]) {
+        await interaction.reply('❌ Bạn không có đủ điểm để cược hoặc nhập số tiền cược không hợp lệ!');
+        return;
+    }
+
+    // Tung xúc xắc
+    const dice1 = Math.floor(Math.random() * 6) + 1;
+    const dice2 = Math.floor(Math.random() * 6) + 1;
+    const dice3 = Math.floor(Math.random() * 6) + 1;
+    const total = dice1 + dice2 + dice3;
+
+    const result = total >= 11 ? 'tai' : 'xiu';
+    let message = `🎲 Kết quả: ${dice1} + ${dice2} + ${dice3} = **${total}** → ${result === 'tai' ? '🔴 Tài' : '🔵 Xỉu'}`;
+
+    if (betChoice === result) {
+        userPoints[userId] += betAmount;
+        message += `
+🎉 Bạn thắng! +${betAmount} điểm
+💰 Số dư hiện tại: ${userPoints[userId]} điểm`;
+    } else {
+        userPoints[userId] -= betAmount;
+        message += `
+😢 Bạn thua! -${betAmount} điểm
+💰 Số dư hiện tại: ${userPoints[userId]} điểm`;
+    }
+
+    await interaction.reply(message);
+}
+
+// mo nhac youtube
 async function handlePlayCommand(interaction) {
     const input = interaction.options.getString('url');
     const inputs = input.split(',').map(i => i.trim()).filter(Boolean);
@@ -323,78 +468,6 @@ async function handleListCommand(interaction) {
         .join('\n');
 
     interaction.reply(`🎶 Danh sách bài hát:\n${songList}`);
-}
-
-async function handleTTSCommand(interaction) {
-    const text = interaction.options.getString('input');
-    if (!text) {
-        await interaction.reply('❌ Vui lòng nhập nội dung để đọc!');
-        return;
-    }
-
-    const voiceChannel = interaction.member.voice.channel;
-    if (!voiceChannel) {
-        await interaction.reply('❌ Bạn cần tham gia một kênh thoại trước!');
-        return;
-    }
-
-    try {
-        const url = googleTTS.getAudioUrl(text, { lang: 'vi', slow: false });
-        const connection = joinVoiceChannel({
-            channelId: voiceChannel.id,
-            guildId: voiceChannel.guild.id,
-            adapterCreator: voiceChannel.guild.voiceAdapterCreator,
-        });
-
-        const player = createAudioPlayer();
-        const resource = createAudioResource(url);
-        player.play(resource);
-        connection.subscribe(player);
-
-        await interaction.reply(`🔊 Đọc: "${text}"`);
-    } catch (error) {
-        console.error(error);
-        await interaction.reply('❌ Lỗi khi phát TTS.');
-    }
-}
-
-async function handleTaiXiuCommand(interaction) {
-    const userId = interaction.user.id;
-    const betChoice = interaction.options.getString('bet');
-    const betAmount = interaction.options.getInteger('amount');
-
-    // Kiểm tra điểm của người chơi
-    if (!userPoints[userId]) {
-        userPoints[userId] = 1000; // Mặc định có 1000 điểm
-    }
-
-    if (betAmount <= 0 || betAmount > userPoints[userId]) {
-        await interaction.reply('❌ Bạn không có đủ điểm để cược hoặc nhập số tiền cược không hợp lệ!');
-        return;
-    }
-
-    // Tung xúc xắc
-    const dice1 = Math.floor(Math.random() * 6) + 1;
-    const dice2 = Math.floor(Math.random() * 6) + 1;
-    const dice3 = Math.floor(Math.random() * 6) + 1;
-    const total = dice1 + dice2 + dice3;
-
-    const result = total >= 11 ? 'tai' : 'xiu';
-    let message = `🎲 Kết quả: ${dice1} + ${dice2} + ${dice3} = **${total}** → ${result === 'tai' ? '🔴 Tài' : '🔵 Xỉu'}`;
-
-    if (betChoice === result) {
-        userPoints[userId] += betAmount;
-        message += `
-🎉 Bạn thắng! +${betAmount} điểm
-💰 Số dư hiện tại: ${userPoints[userId]} điểm`;
-    } else {
-        userPoints[userId] -= betAmount;
-        message += `
-😢 Bạn thua! -${betAmount} điểm
-💰 Số dư hiện tại: ${userPoints[userId]} điểm`;
-    }
-
-    await interaction.reply(message);
 }
 
 async function handleButtonInteraction(interaction) {
