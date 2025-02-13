@@ -149,7 +149,7 @@ client.on('interactionCreate', async interaction => {
         } else if (commandName ==='lofi'){
             await handleLofiCommand(interaction);
         } else if (commandName === 'noichu'){
-            await handleNoichuCommand(interaction);
+            await handleNoiChuCommand(interaction);
         } else if (commandName === 'diem'){
             await handleDiemCommand(interaction);
         }
