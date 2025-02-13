@@ -4,6 +4,7 @@ const { Client, GatewayIntentBits, SlashCommandBuilder, ButtonBuilder, ButtonSty
 const { REST } = require('@discordjs/rest');
 const { Routes } = require('discord-api-types/v9');
 const { joinVoiceChannel, createAudioPlayer, createAudioResource, AudioPlayerStatus } = require('@discordjs/voice');
+const googleTTS = require('google-tts-api');
 require('dotenv').config();
 
 // Initialize Discord client and YouTube API
@@ -51,6 +52,14 @@ const commands = [
     new SlashCommandBuilder()
         .setName('list')
         .setDescription('Show the current queue of songs.'),
+    new SlashCommandBuilder()
+        .setName('say')
+        .setDescription('Bot say')
+        .addStringOption(option =>
+            option.setName('input')
+                .setDescription('Nội dung bạn muốn bot đọc')
+                .setRequired(true)
+        )
 ].map(command => command.toJSON());
 
 const rest = new REST({ version: '9' }).setToken(process.env.DISCORD_TOKEN);
@@ -87,10 +96,14 @@ client.on('interactionCreate', async interaction => {
             await handleResumeCommand(interaction);
         } else if (commandName === 'list') {
             await handleListCommand(interaction);
+        } else if (commandName === 'say') {
+            await handleTTSCommand(interaction);
         }
     } else if (interaction.isButton()) {
         await handleButtonInteraction(interaction);
     }
+
+    
 });
 
 async function handlePlayCommand(interaction) {
@@ -252,6 +265,38 @@ async function handleListCommand(interaction) {
     interaction.reply(`🎶 Danh sách bài hát:\n${songList}`);
 }
 
+async function handleTTSCommand(interaction) {
+    const text = interaction.options.getString('input');
+    if (!text) {
+        await interaction.reply('❌ Vui lòng nhập nội dung để đọc!');
+        return;
+    }
+
+    const voiceChannel = interaction.member.voice.channel;
+    if (!voiceChannel) {
+        await interaction.reply('❌ Bạn cần tham gia một kênh thoại trước!');
+        return;
+    }
+
+    try {
+        const url = googleTTS.getAudioUrl(text, { lang: 'vi', slow: false });
+        const connection = joinVoiceChannel({
+            channelId: voiceChannel.id,
+            guildId: voiceChannel.guild.id,
+            adapterCreator: voiceChannel.guild.voiceAdapterCreator,
+        });
+
+        const player = createAudioPlayer();
+        const resource = createAudioResource(url);
+        player.play(resource);
+        connection.subscribe(player);
+
+        await interaction.reply(`🔊 Đọc: "${text}"`);
+    } catch (error) {
+        console.error(error);
+        await interaction.reply('❌ Lỗi khi phát TTS.');
+    }
+}
 
 async function handleButtonInteraction(interaction) {
     const { guildId } = interaction;
