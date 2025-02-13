@@ -232,12 +232,21 @@ async function handleLofiCommand(interaction) {
             adapterCreator: interaction.guild.voiceAdapterCreator,
         });
 
-        const stream = await play.stream('https://www.youtube.com/watch?v=jfKfPfyJRdk');
-        const resource = createAudioResource(stream.stream, { inputType: stream.type });
         const player = createAudioPlayer();
-
-        player.play(resource);
         connection.subscribe(player);
+
+        async function playLofi() {
+            const stream = await play.stream('https://www.youtube.com/watch?v=jfKfPfyJRdk');
+            const resource = createAudioResource(stream.stream, { inputType: stream.type });
+            player.play(resource);
+        }
+
+        await playLofi();
+
+        player.on(AudioPlayerStatus.Idle, async () => {
+            console.log('🔄 Phát lại nhạc Lofi...');
+            await playLofi();
+        });
 
         interaction.followUp('🎵 Đang phát Lofi 24/24!');
     } catch (error) {
