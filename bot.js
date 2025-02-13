@@ -164,13 +164,17 @@ async function handlePlayCommand(interaction) {
         try {
             let songInfo;
             if (query.startsWith('http')) {
-                const videoId = query.split('v=')[1].split('&')[0];
+                //const videoId = query.split('v=')[1]?.split('&')[0];
+                const urlObj = new URL(query);
+                const videoId = urlObj.searchParams.get('v'); // Lấy video ID chuẩn
                 songInfo = await youtube.videos.list({
                     part: 'snippet,contentDetails',
                     id: videoId,
                 });
                 const video = songInfo.data.items[0];
-                const streamInfo = await ytStream.stream(query);
+                //const streamInfo = await ytStream.stream(query);
+                const embedUrl = `https://www.youtube.com/embed/${videoId}`;
+                const streamInfo = await ytStream.stream(embedUrl);
                 songs.push({
                     title: video.snippet.title || query,
                     url: query,
@@ -187,10 +191,12 @@ async function handlePlayCommand(interaction) {
 
                 if (searchResult.data.items.length > 0) {
                     const video = searchResult.data.items[0];
-                    const streamInfo = await ytStream.stream(`https://www.youtube.com/watch?v=${video.id.videoId}`);
+                    //const streamInfo = await ytStream.stream(`https://www.youtube.com/watch?v=${video.id.videoId}`);
+                    const embedUrl = `https://www.youtube.com/embed/${video.id.videoId}`;
+                    const streamInfo = await ytStream.stream(embedUrl);
                     songs.push({
                         title: video.snippet.title,
-                        url: `https://www.youtube.com/watch?v=${video.id.videoId}`,
+                        url: embedUrl,
                         stream: streamInfo.stream,
                         type: streamInfo.type,
                     });
