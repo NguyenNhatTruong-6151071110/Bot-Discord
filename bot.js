@@ -6,6 +6,8 @@ const { Routes } = require('discord-api-types/v9');
 const { joinVoiceChannel, createAudioPlayer, createAudioResource, AudioPlayerStatus } = require('@discordjs/voice');
 const googleTTS = require('google-tts-api');
 const play = require('play-dl');
+const axios = require("axios");
+const fs = require('fs');
 require('dotenv').config();
 
 // Initialize Discord client and YouTube API
@@ -20,10 +22,14 @@ const client = new Client({
 
 const queue = new Map();
 
-// Lưu điểm của người chơi
-const userPoints = {};
-// Lưu 2 từ cuối của tin nhắn trước
-let lastTwoWords = null;
+// Lưu điểm của người chơi tài xỉu
+const userPointstaixiu = {};
+
+//Lưu điểm của người chơi nối chứ
+const scores = {};
+let ongoingGames = {};
+const lastBotWord = {}; // Lưu từ cuối cùng bot đã gửi cho từng người chơi
+const API_URL = 'https://vi.wiktionary.org/w/api.php';
 
 //lofi
 const STREAM_URL = "https://www.youtube.com/watch?v=jfKfPfyJRdk";
@@ -33,6 +39,8 @@ const youtube = google.youtube({
     version: 'v3',
     auth: process.env.YOUTUBE_API_KEY, // Add your API key
 });
+
+
 
 // Register slash commands
 const commands = [
@@ -93,18 +101,16 @@ const commands = [
                 .setRequired(true)
         ),
         new SlashCommandBuilder()
-        .setName("noichu")
-        .setDescription("Nối chữ theo quy tắc!")
-        .addStringOption((option) =>
-            option
-                .setName("input")
-                .setDescription("Nhập từ ghép của bạn")
+        .setName('noichu')
+        .setDescription('Chơi nối chữ với bot!')
+        .addStringOption(option =>
+            option.setName('input')
+                .setDescription('Nhập từ của bạn')
                 .setRequired(true)
         ),
-
     new SlashCommandBuilder()
-        .setName("diem")
-        .setDescription("Xem điểm của bạn"),
+        .setName('diem')
+        .setDescription('Xem điểm của bạn'),
 
 ].map(command => command.toJSON());
 
@@ -160,51 +166,55 @@ client.on('interactionCreate', async interaction => {
     
 });
 
-// Xử lý lệnh /noichu
+//noichu
+// Hàm tìm từ từ Google
+async function fetchWordList(startingWord) {
+    try {
+        const response = await axios.get(API_URL, {
+            params: {
+                action: 'query',
+                list: 'allpages',
+                apfrom: startingWord,
+                aplimit: 10,
+                format: 'json'
+            }
+        });
+        return response.data.query.allpages.map(page => page.title);
+    } catch (error) {
+        console.error('Error fetching word list:', error);
+        return [];
+    }
+}
+
 async function handleNoiChuCommand(interaction) {
-    const input = interaction.options.getString("input").trim();
-    const words = input.split(/\s+/);
-
-    if (words.length < 2) {
-        await interaction.reply("⚠ Bạn cần nhập ít nhất 2 từ.");
-        return;
+    const userId = interaction.user.id;
+    const userInput = interaction.options.getString('input').trim().toLowerCase();
+    
+    if (!ongoingGames[userId]) {
+        ongoingGames[userId] = [];
     }
-
-    const firstTwoWords = words.slice(0, 2).join(" ");
-    if (!userPoints[interaction.user.id]) userPoints[interaction.user.id] = 1000;
-
-    if (lastTwoWords && firstTwoWords !== lastTwoWords) {
-        // Người chơi nối sai -> trừ 10 điểm
-        userPoints[interaction.user.id] -= 10;
-        await interaction.reply(
-            `❌ Sai! Bạn bị trừ 10 điểm. Điểm hiện tại: ${userPoints[interaction.user.id]}`
-        );
-    } else {
-        // Bot kiểm tra xem có thể nối tiếp không
-        if (!canBotContinue(words.slice(-2))) {
-            // Nếu bot không thể nối -> Cộng 10 điểm cho người chơi
-            userPoints[interaction.user.id] += 10;
-            await interaction.reply(
-                `🤖 Bot không thể nối tiếp! Bạn được cộng 10 điểm. Điểm hiện tại: ${userPoints[interaction.user.id]}`
-            );
-        } else {
-            await interaction.reply(`✅ Hợp lệ! Tiếp tục nào!`);
-        }
+    
+    ongoingGames[userId].push(userInput);
+    const words = userInput.split(' ');
+    const lastWord = words[words.length - 1];
+    const wordList = await fetchWordList(lastWord);
+    
+    if (wordList.length === 0) {
+        scores[userId] = (scores[userId] || 0) + 10;
+        delete ongoingGames[userId];
+        return interaction.reply(`Bạn đã nhập: **${userInput}**\nBot không tìm được từ nào! Bạn thắng và được cộng 10 điểm. Điểm hiện tại: ${scores[userId]}`);
     }
-
-    lastTwoWords = words.slice(-2).join(" ");
+    
+    const botWords = wordList.find(word => word.split(' ').length === 2) || (wordList[0] + ' gì đó');
+    ongoingGames[userId].push(botWords);
+    
+    await interaction.reply(`Bạn đã nhập: **${userInput}**\nBot nối: **${botWords}**. Hãy tiếp tục!`);
 }
 
-// Hàm kiểm tra xem bot có thể nối tiếp không
-function canBotContinue(lastWords) {
-    // Ở phiên bản này, bot không có danh sách từ để nối tiếp -> Luôn thất bại
-    return false;
-}
-
-// Xử lý lệnh /diem
 async function handleDiemCommand(interaction) {
-    const points = userPoints[interaction.user.id] || 1000;
-    await interaction.reply(`🎯 Điểm của bạn: ${points}`);
+    const userId = interaction.user.id;
+    scores[userId] = scores[userId] || 0;
+    await interaction.reply(`Điểm của bạn: ${scores[userId]}`);
 }
 
 //mo nhac lofi
@@ -277,11 +287,11 @@ async function handleTaiXiuCommand(interaction) {
     const betAmount = interaction.options.getInteger('amount');
 
     // Kiểm tra điểm của người chơi
-    if (!userPoints[userId]) {
-        userPoints[userId] = 1000; // Mặc định có 1000 điểm
+    if (!userPointstaixiu[userId]) {
+        userPointstaixiu[userId] = 1000; // Mặc định có 1000 điểm
     }
 
-    if (betAmount <= 0 || betAmount > userPoints[userId]) {
+    if (betAmount <= 0 || betAmount > userPointstaixiu[userId]) {
         await interaction.reply('❌ Bạn không có đủ điểm để cược hoặc nhập số tiền cược không hợp lệ!');
         return;
     }
@@ -296,15 +306,15 @@ async function handleTaiXiuCommand(interaction) {
     let message = `🎲 Kết quả: ${dice1} + ${dice2} + ${dice3} = **${total}** → ${result === 'tai' ? '🔴 Tài' : '🔵 Xỉu'}`;
 
     if (betChoice === result) {
-        userPoints[userId] += betAmount;
+        userPointstaixiu[userId] += betAmount;
         message += `
 🎉 Bạn thắng! +${betAmount} điểm
-💰 Số dư hiện tại: ${userPoints[userId]} điểm`;
+💰 Số dư hiện tại: ${userPointstaixiu[userId]} điểm`;
     } else {
-        userPoints[userId] -= betAmount;
+        userPointstaixiu[userId] -= betAmount;
         message += `
 😢 Bạn thua! -${betAmount} điểm
-💰 Số dư hiện tại: ${userPoints[userId]} điểm`;
+💰 Số dư hiện tại: ${userPointstaixiu[userId]} điểm`;
     }
 
     await interaction.reply(message);
