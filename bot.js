@@ -118,9 +118,19 @@ const commands = [
     new SlashCommandBuilder()
         .setName('stand')
         .setDescription('Dừng rút bài, so điểm với nhà cái'),
+
     new SlashCommandBuilder()
         .setName('reset')
-        .setDescription('Reset game Black jack')
+        .setDescription('Reset game Black jack'),
+
+    new SlashCommandBuilder()
+        .setName('banword')
+        .setDescription('Thêm từ cần ban')
+        .addStringOption(option => 
+            option.setName('word')
+                .setDescription('Từ cần cấm')
+                .setRequired(true)
+        ),
 
 ].map(command => command.toJSON());
 
@@ -184,8 +194,9 @@ client.on('interactionCreate', async interaction => {
             await handleStandCommand(interaction);
         } else if (commandName === "reset") {
             await handleResetGameCommand(interaction);
+        } else if (commandName === "banword") {
+            await handleBanWordCommand(interaction);
         }
-
         
     } else if (interaction.isButton()) {
         await handleButtonInteraction(interaction);
@@ -933,4 +944,57 @@ async function handleResetGameCommand(interaction) {
     resetGame();
     await interaction.reply('🔄 **Game đã được reset!** Sử dụng `/blackjack` để bắt đầu ván mới.');
 }
+
+// -----------------------------------GAME BAN WORD
+const defaultBannedWords = ['ngu', 'gà', 'cặc', 'lồn'];
+let bannedWords = [...defaultBannedWords]; // Kết hợp với từ người dùng thêm
+
+async function handleBanWordCommand(interaction) {
+    console.log('Nhận lệnh /banword');
+    try {
+        const word = interaction.options.getString('word');
+        if (!word) {
+            console.log('Không có từ được nhập!');
+            return await interaction.reply('⚠️ Bạn phải nhập một từ để cấm!');
+        }
+        bannedWords.push(word.toLowerCase());
+        console.log(`Đã thêm từ cấm: ${word}`);
+        await interaction.reply(`🚫 Từ "${word}" đã được thêm vào danh sách cấm!`);
+    } catch (error) {
+        console.error('Lỗi khi xử lý /banword:', error);
+        await interaction.reply('⚠️ Đã xảy ra lỗi khi xử lý lệnh.');
+    }
+}
+
+async function handleMessage(message) {
+    if (message.author.bot) return;
+    console.log(`Tin nhắn nhận được: ${message.content}`);
+
+    if (bannedWords.some(word => message.content.toLowerCase().includes(word))) {
+        try {
+            const botMember = await message.guild.members.fetch(client.user.id);
+            const targetMember = message.member;
+
+            // Kiểm tra xem bot có quyền đổi tên không
+            if (!botMember.permissions.has("ManageNicknames")) {
+                console.log("❌ Bot không có quyền đổi tên!");
+                return await message.reply("⚠️ Bot không có quyền đổi tên thành viên.");
+            }
+
+            // Kiểm tra xem bot có vai trò cao hơn không
+            if (targetMember.roles.highest.position >= botMember.roles.highest.position) {
+                console.log("❌ Bot không thể đổi tên người có vai trò cao hơn!");
+                return await message.reply("⚠️ Bot không thể đổi tên bạn do vai trò của bạn cao hơn bot.");
+            }
+
+            // Đổi tên thành "Gà Mờ"
+            await targetMember.setNickname('Thằng Ngu 🤣');
+            await message.reply('⚠️ Bạn đã vi phạm từ cấm và bị đổi tên thành "Thằng Ngu 🤣"!');
+        } catch (error) {
+            console.error('Lỗi khi đổi tên:', error);
+            await message.reply("⚠️ Đã xảy ra lỗi khi đổi tên.");
+        }
+    }
+}
+client.on('messageCreate', handleMessage);
 client.login(process.env.DISCORD_TOKEN); 
