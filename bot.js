@@ -1,6 +1,6 @@
 const { google } = require('googleapis');
 const ytStream = require('yt-stream');
-const { Client, GatewayIntentBits, SlashCommandBuilder, ButtonBuilder, ButtonStyle, ActionRowBuilder, Events } = require('discord.js');
+const { Client, GatewayIntentBits, SlashCommandBuilder, ButtonBuilder, ButtonStyle, ActionRowBuilder, Events, EmbedBuilder } = require('discord.js');
 const { REST } = require('@discordjs/rest');
 const { Routes } = require('discord-api-types/v9');
 const { joinVoiceChannel, createAudioPlayer, createAudioResource, AudioPlayerStatus } = require('@discordjs/voice');
@@ -10,6 +10,7 @@ const axios = require("axios");
 const fs = require('fs');
 require('dotenv').config();
 
+// -----------------------------------------KHAI BÁO CHUNG
 // Initialize Discord client and YouTube API
 const client = new Client({
     intents: [
@@ -19,36 +20,6 @@ const client = new Client({
         GatewayIntentBits.GuildVoiceStates,
     ],
 });
-
-const queue = new Map();
-
-// Lưu điểm của người chơi tài xỉu
-const userPointstaixiu = {};
-
-//Lưu điểm của người chơi nối chứ
-const scores = {};
-let ongoingGames = {};
-const lastBotWord = {}; // Lưu từ cuối cùng bot đã gửi cho từng người chơi
-const API_URL = 'https://vi.wiktionary.org/w/api.php';
-
-//cao thu nhanh tay
-let gameActive = false;
-let words = [];
-let currentWord = "";
-let startTime = 0;
-let wordInProgress = false; // Tránh bot gọi nextWord() nhiều lần cùng lúc
-let currentTimeout = null; // Dùng để hủy timeout trước đó
-const SCORE_FILE = "scores.json";// lưu điểm
-const WORDS_FILE = "words.json"; // Lưu danh sách từ
-//const DEFAULT_WORDS = ["discord", "javascript", "bot", "fast", "game", "challenge", "speed", "react", "typescript", "coding"];
-const DEFAULT_WORDS = ["discord", "javascript", "bot",]
-// Configure YouTube API
-const youtube = google.youtube({
-    version: 'v3',
-    auth: process.env.YOUTUBE_API_KEY, // Add your API key
-});
-
-
 
 // Register slash commands
 const commands = [
@@ -108,7 +79,7 @@ const commands = [
                 .setDescription('Số tiền cược')
                 .setRequired(true)
         ),
-        new SlashCommandBuilder()
+    new SlashCommandBuilder()
         .setName('noichu')
         .setDescription('Chơi nối chữ với bot!')
         .addStringOption(option =>
@@ -125,12 +96,31 @@ const commands = [
         .setDescription("Bắt đầu trò chơi Cao thủ nhanh tay"),
 
     new SlashCommandBuilder()
-            .setName('diemso')
-            .setDescription("Xem bảng xếp hạng điểm số"),
+        .setName('diemso')
+        .setDescription("Xem bảng xếp hạng điểm số"),
 
     new SlashCommandBuilder()
-            .setName('themtu')
-            .setDescription("Thêm từ vào trò chơi")
+        .setName('themtu')
+        .setDescription("Thêm từ vào trò chơi"),
+
+    new SlashCommandBuilder()
+        .setName('blackjack')
+        .setDescription("Bắt đầu chơi Black jack"),
+    
+    new SlashCommandBuilder()
+        .setName('join')
+        .setDescription("Tham gia vào trò chơi Black jack"),
+
+    new SlashCommandBuilder()
+        .setName('hit')
+        .setDescription("Rút thêm bài"),
+
+    new SlashCommandBuilder()
+        .setName('stand')
+        .setDescription('Dừng rút bài, so điểm với nhà cái'),
+    new SlashCommandBuilder()
+        .setName('reset')
+        .setDescription('Reset game Black jack')
 
 ].map(command => command.toJSON());
 
@@ -178,185 +168,38 @@ client.on('interactionCreate', async interaction => {
             await handleNoiChuCommand(interaction);
         } else if (commandName === 'diem') {
             await handleDiemCommand(interaction);
-        } else if (interaction.commandName === "batdau") {
+        } else if (commandName === "batdau") {
             await handleBatDauCommand(interaction);
-        } else if (interaction.commandName === "diemso") {
+        } else if (commandName === "diemso") {
             await handleScoreCommand(interaction);
-        }else if (interaction.commandName === "themtu") {
+        }else if (commandName === "themtu") {
             await handleAddWordCommand(interaction);
+        } else if (commandName === "blackjack") {
+            await handleBlackjackCommand(interaction);
+        } else if (commandName === "join") {
+            await handleJoinCommand(interaction);
+        } else if (commandName === "hit") {
+            await handleHitCommand(interaction);
+        }else if (commandName === "stand") {
+            await handleStandCommand(interaction);
+        } else if (commandName === "reset") {
+            await handleResetGameCommand(interaction);
         }
+
         
     } else if (interaction.isButton()) {
         await handleButtonInteraction(interaction);
     }
-
     
 });
 
-//noichu
-// Hàm tìm từ từ Google
-async function fetchWordList(startingWord) {
-    try {
-        const response = await axios.get(API_URL, {
-            params: {
-                action: 'query',
-                list: 'allpages',
-                apfrom: startingWord,
-                aplimit: 10,
-                format: 'json'
-            }
-        });
-        return response.data.query.allpages.map(page => page.title);
-    } catch (error) {
-        console.error('Error fetching word list:', error);
-        return [];
-    }
-}
-
-async function handleNoiChuCommand(interaction) {
-    const userId = interaction.user.id;
-    const userInput = interaction.options.getString('input').trim().toLowerCase();
-    
-    if (!ongoingGames[userId]) {
-        ongoingGames[userId] = [];
-    }
-    
-    ongoingGames[userId].push(userInput);
-    const words = userInput.split(' ');
-    const lastWord = words[words.length - 1];
-    const wordList = await fetchWordList(lastWord);
-    
-    if (wordList.length === 0) {
-        scores[userId] = (scores[userId] || 0) + 10;
-        delete ongoingGames[userId];
-        return interaction.reply(`Bạn đã nhập: **${userInput}**\nBot không tìm được từ nào! Bạn thắng và được cộng 10 điểm. Điểm hiện tại: ${scores[userId]}`);
-    }
-    
-    const botWords = wordList.find(word => word.split(' ').length === 2) || (wordList[0] + ' gì đó');
-    ongoingGames[userId].push(botWords);
-    
-    await interaction.reply(`Bạn đã nhập: **${userInput}**\nBot nối: **${botWords}**. Hãy tiếp tục!`);
-}
-
-async function handleDiemCommand(interaction) {
-    const userId = interaction.user.id;
-    scores[userId] = scores[userId] || 0;
-    await interaction.reply(`Điểm của bạn: ${scores[userId]}`);
-}
-
-//mo nhac lofi
-async function handleLofiCommand(interaction) {
-    try {
-        if (!interaction.member.voice.channel) {
-            return interaction.reply({ content: 'Bạn cần tham gia kênh thoại trước!', ephemeral: true });
-        }
-
-        await interaction.deferReply();
-
-        const connection = joinVoiceChannel({
-            channelId: interaction.member.voice.channel.id,
-            guildId: interaction.guild.id,
-            adapterCreator: interaction.guild.voiceAdapterCreator,
-        });
-
-        const player = createAudioPlayer();
-        connection.subscribe(player);
-
-        async function playLofi() {
-            const stream = await play.stream('https://www.youtube.com/watch?v=jfKfPfyJRdk');
-            const resource = createAudioResource(stream.stream, { inputType: stream.type });
-            player.play(resource);
-        }
-
-        await playLofi();
-
-        player.on(AudioPlayerStatus.Idle, async () => {
-            console.log('🔄 Phát lại nhạc Lofi...');
-            await playLofi();
-        });
-
-        interaction.followUp('🎵 Đang phát Lofi 24/24!');
-    } catch (error) {
-        console.error('Lỗi khi xử lý lệnh lofi:', error);
-        interaction.followUp('❌ Đã xảy ra lỗi khi phát nhạc lofi.');
-    }
-}
-
-//nho bot noi chuyen
-async function handleTTSCommand(interaction) {
-    const text = interaction.options.getString('input');
-    if (!text) {
-        await interaction.reply('❌ Vui lòng nhập nội dung để đọc!');
-        return;
-    }
-
-    const voiceChannel = interaction.member.voice.channel;
-    if (!voiceChannel) {
-        await interaction.reply('❌ Bạn cần tham gia một kênh thoại trước!');
-        return;
-    }
-
-    try {
-        const url = googleTTS.getAudioUrl(text, { lang: 'vi', slow: false });
-        const connection = joinVoiceChannel({
-            channelId: voiceChannel.id,
-            guildId: voiceChannel.guild.id,
-            adapterCreator: voiceChannel.guild.voiceAdapterCreator,
-        });
-
-        const player = createAudioPlayer();
-        const resource = createAudioResource(url);
-        player.play(resource);
-        connection.subscribe(player);
-
-        await interaction.reply(`🔊 Đọc: "${text}"`);
-    } catch (error) {
-        console.error(error);
-        await interaction.reply('❌ Lỗi khi phát TTS.');
-    }
-}
-
-// game tai xiu
-async function handleTaiXiuCommand(interaction) {
-    const userId = interaction.user.id;
-    const betChoice = interaction.options.getString('bet');
-    const betAmount = interaction.options.getInteger('amount');
-
-    // Kiểm tra điểm của người chơi
-    if (!userPointstaixiu[userId]) {
-        userPointstaixiu[userId] = 1000; // Mặc định có 1000 điểm
-    }
-
-    if (betAmount <= 0 || betAmount > userPointstaixiu[userId]) {
-        await interaction.reply('❌ Bạn không có đủ điểm để cược hoặc nhập số tiền cược không hợp lệ!');
-        return;
-    }
-
-    // Tung xúc xắc
-    const dice1 = Math.floor(Math.random() * 6) + 1;
-    const dice2 = Math.floor(Math.random() * 6) + 1;
-    const dice3 = Math.floor(Math.random() * 6) + 1;
-    const total = dice1 + dice2 + dice3;
-
-    const result = total >= 11 ? 'tai' : 'xiu';
-    let message = `🎲 Kết quả: ${dice1} + ${dice2} + ${dice3} = **${total}** → ${result === 'tai' ? '🔴 Tài' : '🔵 Xỉu'}`;
-
-    if (betChoice === result) {
-        userPointstaixiu[userId] += betAmount;
-        message += `
-🎉 Bạn thắng! +${betAmount} điểm
-💰 Số dư hiện tại: ${userPointstaixiu[userId]} điểm`;
-    } else {
-        userPointstaixiu[userId] -= betAmount;
-        message += `
-😢 Bạn thua! -${betAmount} điểm
-💰 Số dư hiện tại: ${userPointstaixiu[userId]} điểm`;
-    }
-
-    await interaction.reply(message);
-}
-
-// mo nhac youtube
+// ----------------------------------NHẠC YOUTUBE
+const queue = new Map();
+// Configure YouTube API
+const youtube = google.youtube({
+    version: 'v3',
+    auth: process.env.YOUTUBE_API_KEY, // Add your API key
+});
 async function handlePlayCommand(interaction) {
     const input = interaction.options.getString('url');
     const inputs = input.split(',').map(i => i.trim()).filter(Boolean);
@@ -623,7 +466,117 @@ function playNextSong(guildId, interaction) {
     });
 }
 
-//cao thủ nhanh tay
+//-------------------------------------------GAME TÀI XỈU
+// Lưu điểm của người chơi tài xỉu
+const userPointstaixiu = {};
+async function handleTaiXiuCommand(interaction) {
+    const userId = interaction.user.id;
+    const betChoice = interaction.options.getString('bet');
+    const betAmount = interaction.options.getInteger('amount');
+
+    // Kiểm tra điểm của người chơi
+    if (!userPointstaixiu[userId]) {
+        userPointstaixiu[userId] = 1000; // Mặc định có 1000 điểm
+    }
+
+    if (betAmount <= 0 || betAmount > userPointstaixiu[userId]) {
+        await interaction.reply('❌ Bạn không có đủ điểm để cược hoặc nhập số tiền cược không hợp lệ!');
+        return;
+    }
+
+    // Tung xúc xắc
+    const dice1 = Math.floor(Math.random() * 6) + 1;
+    const dice2 = Math.floor(Math.random() * 6) + 1;
+    const dice3 = Math.floor(Math.random() * 6) + 1;
+    const total = dice1 + dice2 + dice3;
+
+    const result = total >= 11 ? 'tai' : 'xiu';
+    let message = `🎲 Kết quả: ${dice1} + ${dice2} + ${dice3} = **${total}** → ${result === 'tai' ? '🔴 Tài' : '🔵 Xỉu'}`;
+
+    if (betChoice === result) {
+        userPointstaixiu[userId] += betAmount;
+        message += `
+🎉 Bạn thắng! +${betAmount} điểm
+💰 Số dư hiện tại: ${userPointstaixiu[userId]} điểm`;
+    } else {
+        userPointstaixiu[userId] -= betAmount;
+        message += `
+😢 Bạn thua! -${betAmount} điểm
+💰 Số dư hiện tại: ${userPointstaixiu[userId]} điểm`;
+    }
+
+    await interaction.reply(message);
+}
+
+//------------------------------------------GAME NỐI CHỮ
+//Lưu điểm của người chơi nối chứ
+const scores = {};
+let ongoingGames = {};
+const lastBotWord = {}; // Lưu từ cuối cùng bot đã gửi cho từng người chơi
+const API_URL = 'https://vi.wiktionary.org/w/api.php';
+
+// Hàm tìm từ từ Google
+async function fetchWordList(startingWord) {
+    try {
+        const response = await axios.get(API_URL, {
+            params: {
+                action: 'query',
+                list: 'allpages',
+                apfrom: startingWord,
+                aplimit: 10,
+                format: 'json'
+            }
+        });
+        return response.data.query.allpages.map(page => page.title);
+    } catch (error) {
+        console.error('Error fetching word list:', error);
+        return [];
+    }
+}
+
+async function handleNoiChuCommand(interaction) {
+    const userId = interaction.user.id;
+    const userInput = interaction.options.getString('input').trim().toLowerCase();
+    
+    if (!ongoingGames[userId]) {
+        ongoingGames[userId] = [];
+    }
+    
+    ongoingGames[userId].push(userInput);
+    const words = userInput.split(' ');
+    const lastWord = words[words.length - 1];
+    const wordList = await fetchWordList(lastWord);
+    
+    if (wordList.length === 0) {
+        scores[userId] = (scores[userId] || 0) + 10;
+        delete ongoingGames[userId];
+        return interaction.reply(`Bạn đã nhập: **${userInput}**\nBot không tìm được từ nào! Bạn thắng và được cộng 10 điểm. Điểm hiện tại: ${scores[userId]}`);
+    }
+    
+    const botWords = wordList.find(word => word.split(' ').length === 2) || (wordList[0] + ' gì đó');
+    ongoingGames[userId].push(botWords);
+    
+    await interaction.reply(`Bạn đã nhập: **${userInput}**\nBot nối: **${botWords}**. Hãy tiếp tục!`);
+}
+
+async function handleDiemCommand(interaction) {
+    const userId = interaction.user.id;
+    scores[userId] = scores[userId] || 0;
+    await interaction.reply(`Điểm của bạn: ${scores[userId]}`);
+}
+
+//-------------------------------------GAME CAO THỦ NHANH TAY
+//cao thu nhanh tay
+let gameActive = false;
+let words = [];
+let currentWord = "";
+let startTime = 0;
+let wordInProgress = false; // Tránh bot gọi nextWord() nhiều lần cùng lúc
+let currentTimeout = null; // Dùng để hủy timeout trước đó
+const SCORE_FILE = "scores.json";// lưu điểm
+const WORDS_FILE = "words.json"; // Lưu danh sách từ
+const DEFAULT_WORDS = ["discord", "javascript", "bot", "fast", "game", "challenge", "speed", "react", "typescript", "coding"];
+
 // Đọc điểm từ file JSON
 function loadWords() {
     if (!fs.existsSync(WORDS_FILE)) {
@@ -776,4 +729,208 @@ client.on(Events.MessageCreate, async (message) => {
       nextWord(message.channel);
     }
 });
+
+//-------------------------------------------MỞ NHẠC LOFI
+//mo nhac lofi
+async function handleLofiCommand(interaction) {
+    try {
+        if (!interaction.member.voice.channel) {
+            return interaction.reply({ content: 'Bạn cần tham gia kênh thoại trước!', ephemeral: true });
+        }
+
+        await interaction.deferReply();
+
+        const connection = joinVoiceChannel({
+            channelId: interaction.member.voice.channel.id,
+            guildId: interaction.guild.id,
+            adapterCreator: interaction.guild.voiceAdapterCreator,
+        });
+
+        const player = createAudioPlayer();
+        connection.subscribe(player);
+
+        async function playLofi() {
+            const stream = await play.stream('https://www.youtube.com/watch?v=jfKfPfyJRdk');
+            const resource = createAudioResource(stream.stream, { inputType: stream.type });
+            player.play(resource);
+        }
+
+        await playLofi();
+
+        player.on(AudioPlayerStatus.Idle, async () => {
+            console.log('🔄 Phát lại nhạc Lofi...');
+            await playLofi();
+        });
+
+        interaction.followUp('🎵 Đang phát Lofi 24/24!');
+    } catch (error) {
+        console.error('Lỗi khi xử lý lệnh lofi:', error);
+        interaction.followUp('❌ Đã xảy ra lỗi khi phát nhạc lofi.');
+    }
+}
+
+//-----------------------------------BOT TTS
+//nho bot noi chuyen
+async function handleTTSCommand(interaction) {
+    const text = interaction.options.getString('input');
+    if (!text) {
+        await interaction.reply('❌ Vui lòng nhập nội dung để đọc!');
+        return;
+    }
+
+    const voiceChannel = interaction.member.voice.channel;
+    if (!voiceChannel) {
+        await interaction.reply('❌ Bạn cần tham gia một kênh thoại trước!');
+        return;
+    }
+
+    try {
+        const url = googleTTS.getAudioUrl(text, { lang: 'vi', slow: false });
+        const connection = joinVoiceChannel({
+            channelId: voiceChannel.id,
+            guildId: voiceChannel.guild.id,
+            adapterCreator: voiceChannel.guild.voiceAdapterCreator,
+        });
+
+        const player = createAudioPlayer();
+        const resource = createAudioResource(url);
+        player.play(resource);
+        connection.subscribe(player);
+
+        await interaction.reply(`🔊 Đọc: "${text}"`);
+    } catch (error) {
+        console.error(error);
+        await interaction.reply('❌ Lỗi khi phát TTS.');
+    }
+}
+
+// -------------------------------------------BLACK JACK
+const suits = ['♠️', '♥️', '♦️', '♣️'];
+const values = ['2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A'];
+
+function getDeck() {
+    let deck = [];
+    for (let suit of suits) {
+        for (let value of values) {
+            deck.push({ value, suit });
+        }
+    }
+    return deck.sort(() => Math.random() - 0.5);
+}
+
+function calculateHand(hand) {
+    let sum = 0;
+    let aceCount = 0;
+    for (let card of hand) {
+        if (['J', 'Q', 'K'].includes(card.value)) sum += 10;
+        else if (card.value === 'A') {
+            sum += 11;
+            aceCount++;
+        } else sum += parseInt(card.value);
+    }
+    if (hand.length >= 4) {
+        while (aceCount > 0) {
+            sum -= 10;
+            aceCount--;
+        }
+    }
+    while (sum > 21 && aceCount > 0) {
+        sum -= 10;
+        aceCount--;
+    }
+    return sum;
+}
+
+let game = { active: false, players: {} };
+
+async function handleBlackjackCommand(interaction) {
+    if (game.active) {
+        return await interaction.reply('Ván chơi đang diễn ra! Hãy chờ đến lượt mới.');
+    }
+    resetGame(); // Reset trước khi bắt đầu
+    game.active = true; // Đảm bảo game được kích hoạt
+    game.dealerHand = [game.deck.pop(), game.deck.pop()]; // Bắt đầu game mới
+    await interaction.reply('🎰 **Ván Xì Dách VIP đã bắt đầu!** Dùng `/join` để tham gia.');
+}
+
+function resetGame() {
+    game = { active: false, players: {}, deck: getDeck(), dealerHand: [] };
+}
+
+
+async function handleJoinCommand(interaction) {
+    if (!game.active) return await interaction.reply('Chưa có ván chơi nào! Hãy dùng `/blackjack` để bắt đầu.');
+    let userId = interaction.user.id;
+    if (game.players[userId]) return await interaction.reply('Bạn đã tham gia ván này rồi!');
+    game.players[userId] = { hand: [game.deck.pop(), game.deck.pop()], stand: false };
+    let playerHand = game.players[userId].hand;
+    let playerScore = calculateHand(playerHand);
+    await interaction.reply(`🎉 **${interaction.user.username} đã tham gia!** Bài của bạn: ${playerHand.map(c => `${c.value}${c.suit}`).join(' ')} (${playerScore})`);
+}
+
+async function handleHitCommand(interaction) {
+    let userId = interaction.user.id;
+    if (!game.players[userId]) return await interaction.reply('Bạn chưa tham gia! Dùng `/join` để vào.');
+    let player = game.players[userId];
+    if (player.stand) return await interaction.reply('Bạn đã chọn "Stand", không thể rút thêm!');
+    player.hand.push(game.deck.pop());
+    let playerScore = calculateHand(player.hand);
+    let embed = new EmbedBuilder()
+        .setTitle(`🃏 Xì Dách VIP - ${interaction.user.username}`)
+        .setDescription(`**Bài của bạn:** ${player.hand.map(c => `${c.value}${c.suit}`).join(' ')} (${playerScore})`)
+        .setColor('#FFD700');
+    if (playerScore > 21) {
+        embed.setDescription(`💥 **Bạn quắc! Bạn thua!**\n**Bài của bạn:** ${player.hand.map(c => `${c.value}${c.suit}`).join(' ')} (${playerScore})`);
+        player.stand = true;
+    }
+    await interaction.reply({ embeds: [embed] });
+}
+
+async function handleStandCommand(interaction) {
+    let userId = interaction.user.id;
+    if (!game.players[userId]) return await interaction.reply('Bạn chưa tham gia! Dùng `/join` để vào.');
+    game.players[userId].stand = true;
+    await interaction.reply(`${interaction.user.username} đã chọn "Stand"!`);
+    if (Object.values(game.players).every(p => p.stand)) await handleDealerTurn(interaction);
+}
+
+async function handleDealerTurn(interaction) {
+    let dealerScore = calculateHand(game.dealerHand);
+    while (dealerScore < 17) {
+        game.dealerHand.push(game.deck.pop());
+        dealerScore = calculateHand(game.dealerHand);
+    }
+
+    let embed = new EmbedBuilder()
+        .setTitle('🏆 Kết quả ván Xì Dách')
+        .setDescription(`**Bài của Dealer:** ${game.dealerHand.map(c => `${c.value}${c.suit}`).join(' ')} (${dealerScore})`)
+        .setColor('#FFD700');
+
+    for (let userId in game.players) {
+        let player = game.players[userId];
+        let playerScore = calculateHand(player.hand);
+        let result;
+
+        if (playerScore > 21 || (dealerScore <= 21 && dealerScore > playerScore)) result = '💥 Thua';
+        else if (playerScore === dealerScore) result = '🤝 Hòa';
+        else result = '🎉 Thắng';
+
+        embed.addFields({ name: `<@${userId}>`, value: `**Bài của bạn:** ${player.hand.map(c => `${c.value}${c.suit}`).join(' ')} (${playerScore})\n${result}`, inline: true });
+    }
+
+    game.active = false;
+
+    try {
+        await interaction.editReply({ embeds: [embed] });  // Sử dụng editReply thay vì reply
+    } catch (error) {
+        console.error('Lỗi khi gửi kết quả:', error);
+    }
+
+    setTimeout(resetGame, 2000); // Đặt delay để đảm bảo game reset đúng
+}
+
+async function handleResetGameCommand(interaction) {
+    resetGame();
+    await interaction.reply('🔄 **Game đã được reset!** Sử dụng `/blackjack` để bắt đầu ván mới.');
+}
 client.login(process.env.DISCORD_TOKEN); 
