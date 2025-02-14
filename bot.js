@@ -8,7 +8,6 @@ const googleTTS = require('google-tts-api');
 const play = require('play-dl');
 const axios = require("axios");
 const fs = require('fs');
-const { createCanvas, loadImage } = require('canvas');
 require('dotenv').config();
 
 // Initialize Discord client and YouTube API
@@ -111,28 +110,6 @@ const commands = [
         .setName('diem')
         .setDescription('Xem điểm của bạn'),
 
-    new SlashCommandBuilder()
-        .setName('bet')
-        .setDescription('Đặt cược')
-        .addIntegerOption(option => option.setName('amount')
-        .setDescription('Số tiền cược')
-        .setRequired(true)),
-
-    new SlashCommandBuilder()
-        .setName('call')
-        .setDescription('Theo cược'),
-
-    new SlashCommandBuilder()
-        .setName('raise')
-        .setDescription('Tố cược')
-        .addIntegerOption(option => option.setName('amount')
-        .setDescription('Số tiền tố')
-        .setRequired(true)),
-
-    new SlashCommandBuilder()
-        .setName('fold')
-        .setDescription('Bỏ bài')
-
 ].map(command => command.toJSON());
 
 const rest = new REST({ version: '9' }).setToken(process.env.DISCORD_TOKEN);
@@ -158,7 +135,7 @@ client.once('ready', () => {
 client.on('interactionCreate', async interaction => {
     if (interaction.isCommand()) {
         const { commandName } = interaction;
-        const player = game.players.find(p => p.name === interaction.user.username);
+
         if (commandName === 'play') {
             await handlePlayCommand(interaction);
         } else if (commandName === 'skip') {
@@ -179,27 +156,6 @@ client.on('interactionCreate', async interaction => {
             await handleNoiChuCommand(interaction);
         } else if (commandName === 'diem'){
             await handleDiemCommand(interaction);
-        } else if (!game) {
-            await interaction.reply('Không có ván bài nào đang diễn ra.');
-            return;
-        } else if (!player) {
-            await interaction.reply('Bạn không tham gia ván này.');
-            return;
-        } else if (commandName === 'bet') {
-            const amount = interaction.options.getInteger('amount');
-            player.bet += amount;
-            game.pot += amount;
-            await interaction.reply(`${interaction.user.username} đã cược ${amount}.`);
-        } else if (commandName === 'call') {
-            await interaction.reply(`${interaction.user.username} theo cược.`);
-        } else if (commandName === 'raise') {
-            const amount = interaction.options.getInteger('amount');
-            player.bet += amount;
-            game.pot += amount;
-            await interaction.reply(`${interaction.user.username} đã tố thêm ${amount}.`);
-        } else if (commandName === 'fold') {
-            player.folded = true;
-            await interaction.reply(`${interaction.user.username} đã bỏ bài.`);
         }
     } else if (interaction.isButton()) {
         await handleButtonInteraction(interaction);
@@ -636,85 +592,6 @@ function playNextSong(guildId, interaction) {
         serverQueue.songs.shift();
         playNextSong(guildId, interaction);
     });
-}
-
-// bài poker
-class Deck {
-    constructor() {
-        this.suits = ['spades', 'hearts', 'diamonds', 'clubs'];
-        this.ranks = ['2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A'];
-        this.cards = [];
-
-        this.suits.forEach(suit => {
-            this.ranks.forEach(rank => {
-                this.cards.push({ rank, suit });
-            });
-        });
-    }
-
-    shuffle() {
-        for (let i = this.cards.length - 1; i > 0; i--) {
-            const j = Math.floor(Math.random() * (i + 1));
-            [this.cards[i], this.cards[j]] = [this.cards[j], this.cards[i]];
-        }
-    }
-
-    drawCard() {
-        return this.cards.pop();
-    }
-}
-
-class PokerGame {
-    constructor(players) {
-        this.deck = new Deck();
-        this.deck.shuffle();
-        this.players = players.map(name => ({ name, hand: [], bet: 0, folded: false }));
-        this.communityCards = [];
-        this.pot = 0;
-    }
-
-    dealHands() {
-        this.players.forEach(player => {
-            player.hand = [this.deck.drawCard(), this.deck.drawCard()];
-        });
-    }
-
-    dealFlop() {
-        this.communityCards = [this.deck.drawCard(), this.deck.drawCard(), this.deck.drawCard()];
-    }
-
-    dealTurn() {
-        this.communityCards.push(this.deck.drawCard());
-    }
-
-    dealRiver() {
-        this.communityCards.push(this.deck.drawCard());
-    }
-}
-
-let game = null;
-let players = [];
-
-async function drawPokerTable(players, communityCards) {
-    const canvas = createCanvas(800, 600);
-    const ctx = canvas.getContext('2d');
-    
-    const table = await loadImage('https://i.imgur.com/3p6XEG7.png');
-    ctx.drawImage(table, 0, 0, 800, 600);
-
-    for (let i = 0; i < players.length; i++) {
-        const player = players[i];
-        ctx.fillStyle = 'white';
-        ctx.font = '20px Arial';
-        ctx.fillText(player.name + (player.folded ? ' (Folded)' : ''), 50, 100 + i * 100);
-        
-        for (let j = 0; j < player.hand.length; j++) {
-            const card = await loadImage(`https://tekeye.uk/playing_cards/images/svg_playing_cards/fronts/${player.hand[j].rank}_of_${player.hand[j].suit}.svg`);
-            ctx.drawImage(card, 150 + j * 60, 100 + i * 100, 50, 70);
-        }
-    }
-
-    return canvas.toBuffer();
 }
 
 client.login(process.env.DISCORD_TOKEN); 
