@@ -1,6 +1,6 @@
 const { google } = require('googleapis');
 const ytStream = require('yt-stream');
-const { Client, GatewayIntentBits, SlashCommandBuilder, ButtonBuilder, ButtonStyle, ActionRowBuilder } = require('discord.js');
+const { Client, GatewayIntentBits, SlashCommandBuilder, ButtonBuilder, ButtonStyle, ActionRowBuilder, Events } = require('discord.js');
 const { REST } = require('@discordjs/rest');
 const { Routes } = require('discord-api-types/v9');
 const { joinVoiceChannel, createAudioPlayer, createAudioResource, AudioPlayerStatus } = require('@discordjs/voice');
@@ -31,7 +31,17 @@ let ongoingGames = {};
 const lastBotWord = {}; // Lưu từ cuối cùng bot đã gửi cho từng người chơi
 const API_URL = 'https://vi.wiktionary.org/w/api.php';
 
-
+//cao thu nhanh tay
+let gameActive = false;
+let words = [];
+let currentWord = "";
+let startTime = 0;
+let wordInProgress = false; // Tránh bot gọi nextWord() nhiều lần cùng lúc
+let currentTimeout = null; // Dùng để hủy timeout trước đó
+const SCORE_FILE = "scores.json";// lưu điểm
+const WORDS_FILE = "words.json"; // Lưu danh sách từ
+//const DEFAULT_WORDS = ["discord", "javascript", "bot", "fast", "game", "challenge", "speed", "react", "typescript", "coding"];
+const DEFAULT_WORDS = ["discord", "javascript", "bot",]
 // Configure YouTube API
 const youtube = google.youtube({
     version: 'v3',
@@ -110,6 +120,18 @@ const commands = [
         .setName('diem')
         .setDescription('Xem điểm của bạn'),
 
+    new SlashCommandBuilder()
+        .setName('batdau')
+        .setDescription("Bắt đầu trò chơi Cao thủ nhanh tay"),
+
+    new SlashCommandBuilder()
+            .setName('diemso')
+            .setDescription("Xem bảng xếp hạng điểm số"),
+
+    new SlashCommandBuilder()
+            .setName('themtu')
+            .setDescription("Thêm từ vào trò chơi")
+
 ].map(command => command.toJSON());
 
 const rest = new REST({ version: '9' }).setToken(process.env.DISCORD_TOKEN);
@@ -150,13 +172,20 @@ client.on('interactionCreate', async interaction => {
             await handleTTSCommand(interaction);
         } else if (commandName === 'taixiu') {
             await handleTaiXiuCommand(interaction);
-        } else if (commandName ==='lofi'){
+        } else if (commandName ==='lofi') {
             await handleLofiCommand(interaction);
-        } else if (commandName === 'noichu'){
+        } else if (commandName === 'noichu') {
             await handleNoiChuCommand(interaction);
-        } else if (commandName === 'diem'){
+        } else if (commandName === 'diem') {
             await handleDiemCommand(interaction);
+        } else if (interaction.commandName === "batdau") {
+            await handleBatDauCommand(interaction);
+        } else if (interaction.commandName === "diemso") {
+            await handleScoreCommand(interaction);
+        }else if (interaction.commandName === "themtu") {
+            await handleAddWordCommand(interaction);
         }
+        
     } else if (interaction.isButton()) {
         await handleButtonInteraction(interaction);
     }
@@ -594,4 +623,157 @@ function playNextSong(guildId, interaction) {
     });
 }
 
+//cao thủ nhanh tay
+// Đọc điểm từ file JSON
+function loadWords() {
+    if (!fs.existsSync(WORDS_FILE)) {
+      fs.writeFileSync(WORDS_FILE, JSON.stringify(DEFAULT_WORDS, null, 2));
+      return [...DEFAULT_WORDS];
+    }
+    try {
+      return JSON.parse(fs.readFileSync(WORDS_FILE, "utf8"));
+    } catch {
+      return [...DEFAULT_WORDS];
+    }
+  }
+  
+  // Lưu danh sách từ vào file
+  function saveWords(newWords) {
+    fs.writeFileSync(WORDS_FILE, JSON.stringify(newWords, null, 2));
+  }
+  
+  // Đọc điểm số từ file
+  function loadScores() {
+    if (!fs.existsSync(SCORE_FILE)) {
+      fs.writeFileSync(SCORE_FILE, "{}");
+      return {};
+    }
+    try {
+      return JSON.parse(fs.readFileSync(SCORE_FILE, "utf8"));
+    } catch {
+      return {};
+    }
+  }
+  
+  // Lưu điểm số vào file
+  function saveScores(scores) {
+    fs.writeFileSync(SCORE_FILE, JSON.stringify(scores, null, 2));
+  }
+  
+  // Tạo từ khó hơn (ngẫu nhiên viết hoa hoặc thêm số)
+  function modifyWord(word) {
+    let newWord = word.split("")
+      .map(char => (Math.random() > 0.5 ? char.toUpperCase() : char))
+      .join("");
+    if (Math.random() > 0.5) newWord += Math.floor(Math.random() * 10); // Thêm số
+    return newWord;
+  }
+  
+  // Chọn từ tiếp theo và tiếp tục game
+  async function nextWord(channel) {
+    if (!gameActive || words.length === 0) {
+      gameActive = false;
+      await channel.send("🏁 **Trò chơi kết thúc! Hết từ để chơi.**");
+  
+      // Hiển thị leaderboard sau khi kết thúc
+      setTimeout(() => {
+        handleScoreCommand(channel);
+      }, 1000);
+  
+      return;
+    }
+  
+    if (wordInProgress) return;
+    wordInProgress = true;
+  
+    startTime = Date.now();
+    currentWord = modifyWord(words.shift());
+    await channel.send(`⚡ Ai gõ nhanh nhất? Hãy nhập từ sau: **${currentWord}**`);
+  
+    if (currentTimeout) clearTimeout(currentTimeout);
+  
+    currentTimeout = setTimeout(() => {
+      if (gameActive && words.length > 0) {
+        wordInProgress = false;
+        nextWord(channel);
+      } else {
+        gameActive = false;
+        channel.send("🏁 **Trò chơi kết thúc! Hết từ để chơi.**");
+  
+        // Gọi bảng xếp hạng
+        setTimeout(() => {
+          handleScoreCommand(channel);
+        }, 1000);
+      }
+    }, 10000);
+  }
+  
+  
+  // Xử lý lệnh bắt đầu game
+  async function handleBatDauCommand(interaction) {
+    if (gameActive) {
+      return interaction.reply({ content: "⚠️ Trò chơi đang diễn ra!", ephemeral: true });
+    }
+  
+    gameActive = true;
+    words = Array.isArray(loadWords()) ? [...loadWords()] : [...DEFAULT_WORDS]; // Lấy danh sách từ từ file
+    await interaction.reply("🚀 **Bắt đầu trò chơi Cao thủ nhanh tay!**");
+  
+    nextWord(interaction.channel);
+  }
+  
+  // Hiển thị bảng xếp hạng
+  async function handleScoreCommand(target) {
+    const scores = loadScores();
+    if (!scores || Object.keys(scores).length === 0) {
+      return target.send("🏆 **Bảng xếp hạng trống!** Hãy chơi để có điểm.");
+    }
+  
+    // Sắp xếp và hiển thị top điểm
+    const leaderboard = Object.entries(scores)
+      .sort((a, b) => b[1] - a[1])
+      .map(([id, score], index) => `**${index + 1}. <@${id}>** - ${score} điểm`)
+      .join("\n");
+  
+    if (target.reply) {
+      // Nếu target là interaction
+      await target.reply(`🏆 **Bảng xếp hạng:**\n${leaderboard}`);
+    } else {
+      // Nếu target là channel (khi gọi từ game)
+      await target.send(`🏆 **Bảng xếp hạng:**\n${leaderboard}`);
+    }
+  }
+  
+  // Thêm từ mới vào danh sách
+  async function handleAddWordCommand(interaction) {
+    const newWord = interaction.options.getString("word")?.toLowerCase();
+    if (!newWord) return interaction.reply({ content: "⚠️ Bạn cần nhập một từ!", ephemeral: true });
+  
+    let wordList = loadWords();
+    if (wordList.includes(newWord)) {
+      return interaction.reply({ content: "⚠️ Từ này đã có trong danh sách!", ephemeral: true });
+    }
+  
+    wordList.push(newWord);
+    saveWords(wordList);
+    await interaction.reply(`✅ Đã thêm từ **${newWord}** vào danh sách!`);
+  }
+client.on(Events.MessageCreate, async (message) => {
+    if (message.author.bot || !gameActive) return;
+  
+    if (message.content === currentWord) {
+      wordInProgress = false; // Cho phép gọi nextWord() tiếp theo
+  
+      const reactionTime = ((Date.now() - startTime) / 1000).toFixed(2);
+      const scores = loadScores();
+      scores[message.author.id] = (scores[message.author.id] || 0) + 1;
+      saveScores(scores);
+  
+      await message.channel.send(`🎉 **${message.author.username}** nhập đúng trong **${reactionTime}s**! (+1 điểm)`);
+  
+      // Hủy timeout cũ để tránh gọi nextWord() thêm lần nữa
+      if (currentTimeout) clearTimeout(currentTimeout);
+      nextWord(message.channel);
+    }
+});
 client.login(process.env.DISCORD_TOKEN); 
