@@ -158,6 +158,18 @@ const commands = [
                     { name: 'Tương lai', value: 'future' }
                 )),
 
+    new SlashCommandBuilder()
+        .setName('2048')
+        .setDescription('Bắt đầu game 2048'),
+
+    new SlashCommandBuilder()
+        .setName('tictactoe')
+        .setDescription('Bắt đầu game tictactoe'),
+
+    new SlashCommandBuilder()
+        .setName('doanso')
+        .setDescription('Bắt đầu game đoán số'),
+
 ].map(command => command.toJSON());
 
 const rest = new REST({ version: '9' }).setToken(process.env.DISCORD_TOKEN);
@@ -228,6 +240,10 @@ client.on('interactionCreate', async interaction => {
             await handleBridgeStart(interaction);
         } else if (commandName === "tarot") {
             await handleTarotCommand(interaction);
+        } else if (commandName === "2048") {
+            await handleStart2048Command(interaction);
+        } else if (commandName === "tictactoe") {
+            await handleTicTacToeCommand(interaction);
         }
         
     } else if (interaction.isButton()) {
@@ -1109,5 +1125,52 @@ async function handleTarotCommand(interaction) {
 
     await interaction.reply(`🃏 **Lá bài của bạn:** **${card.name}**\n${typeText}: ${card.meaning}`);
 }
+
+//----------------------------------------ĐOÁN SỐ
+let gameActives = false;
+let targetNumber = 0;
+
+client.on("interactionCreate", async interaction => {
+    if (!interaction.isCommand()) return;
+    
+    if (interaction.commandName === "doanso") {
+        if (gameActives) {
+            return interaction.reply({ content: "🎮 Trò chơi đang diễn ra! Hãy đoán số.", ephemeral: true });
+        }
+
+        gameActives = true;
+        targetNumber = Math.floor(Math.random() * 100) + 1;
+        
+        await interaction.reply("🔢 Tôi đã chọn một số từ **1 đến 100**. Hãy gửi số bạn đoán!");
+
+        const filter = msg => !isNaN(msg.content) && msg.author.id === interaction.user.id;
+        const collector = interaction.channel.createMessageCollector({ filter, time: 60000 });
+
+        collector.on("collect", async msg => {
+            const guess = parseInt(msg.content);
+            if (guess < 1 || guess > 100) {
+                msg.reply("⚠️ Vui lòng đoán số từ **1 đến 100**.");
+                return;
+            }
+
+            if (guess < targetNumber) {
+                msg.reply("🔼 **Lớn hơn!**");
+            } else if (guess > targetNumber) {
+                msg.reply("🔽 **Nhỏ hơn!**");
+            } else {
+                await interaction.channel.send(`🎉 **Chúc mừng ${msg.author.username}, bạn đã đoán đúng số ${targetNumber}!** 🏆`);
+                gameActives = false;
+                collector.stop();
+            }
+        });
+
+        collector.on("end", () => {
+            if (gameActives) {
+                interaction.channel.send(`⏳ Hết thời gian! Số đúng là **${targetNumber}**.`);
+                gameActives = false;
+            }
+        });
+    }
+});
 
 client.login(process.env.DISCORD_TOKEN); 
