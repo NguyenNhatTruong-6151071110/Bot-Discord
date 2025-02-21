@@ -101,7 +101,12 @@ const commands = [
 
     new SlashCommandBuilder()
         .setName('themtu')
-        .setDescription("Thêm từ vào trò chơi"),
+        .setDescription("Thêm từ vào trò chơi")
+        .addStringOption(option => 
+            option.setName('word')
+                .setDescription('Từ thêm vào trò chơi')
+                .setRequired(true)
+            ),
 
     new SlashCommandBuilder()
         .setName('blackjack')
@@ -131,6 +136,27 @@ const commands = [
                 .setDescription('Từ cần cấm')
                 .setRequired(true)
         ),
+
+    new SlashCommandBuilder()
+        .setName('bridge')
+        .setDescription('Bắt đầu game xây cầu'),
+
+    new SlashCommandBuilder()
+        .setName('build')
+        .setDescription('Xây cầu'),
+
+    new SlashCommandBuilder()
+        .setName('tarot')
+        .setDescription('Xem bài Tarot để dự đoán tương lai!')
+        .addStringOption(option =>
+            option.setName('type')
+                .setDescription('Chọn loại bài')
+                .setRequired(true)
+                .addChoices(
+                    { name: 'Quá khứ', value: 'past' },
+                    { name: 'Hiện tại', value: 'present' },
+                    { name: 'Tương lai', value: 'future' }
+                )),
 
 ].map(command => command.toJSON());
 
@@ -196,6 +222,12 @@ client.on('interactionCreate', async interaction => {
             await handleResetGameCommand(interaction);
         } else if (commandName === "banword") {
             await handleBanWordCommand(interaction);
+        } else if (commandName === "build") {
+            await handleBridgeBuild(interaction);
+        } else if (commandName === "bridge") {
+            await handleBridgeStart(interaction);
+        } else if (commandName === "tarot") {
+            await handleTarotCommand(interaction);
         }
         
     } else if (interaction.isButton()) {
@@ -976,25 +1008,106 @@ async function handleMessage(message) {
             const targetMember = message.member;
 
             // Kiểm tra xem bot có quyền đổi tên không
-            if (!botMember.permissions.has("ManageNicknames")) {
-                console.log("❌ Bot không có quyền đổi tên!");
-                return await message.reply("⚠️ Bot không có quyền đổi tên thành viên.");
-            }
+            // if (!botMember.permissions.has("ManageNicknames")) {
+            //     console.log("❌ Bot không có quyền đổi tên!");
+            //     return await message.reply("⚠️ Bot không có quyền đổi tên thành viên.");
+            // }
 
             // Kiểm tra xem bot có vai trò cao hơn không
-            if (targetMember.roles.highest.position >= botMember.roles.highest.position) {
-                console.log("❌ Bot không thể đổi tên người có vai trò cao hơn!");
-                return await message.reply("⚠️ Bot không thể đổi tên bạn do vai trò của bạn cao hơn bot.");
-            }
+            // if (targetMember.roles.highest.position >= botMember.roles.highest.position) {
+            //     console.log("❌ Bot không thể đổi tên người có vai trò cao hơn!");
+            //     return await message.reply("⚠️ Bot không thể đổi tên bạn do vai trò của bạn cao hơn bot.");
+            // }
 
             // Đổi tên thành "Gà Mờ"
             await targetMember.setNickname('Thằng Ngu 🤣');
-            await message.reply('⚠️ Bạn đã vi phạm từ cấm và bị đổi tên thành "Thằng Ngu 🤣"!');
+            //await message.reply('⚠️ Bạn đã vi phạm từ cấm và bị đổi tên thành "Thằng Ngu 🤣"!');
         } catch (error) {
             console.error('Lỗi khi đổi tên:', error);
-            await message.reply("⚠️ Đã xảy ra lỗi khi đổi tên.");
+            //await message.reply("⚠️ Đã xảy ra lỗi khi đổi tên.");
         }
     }
 }
 client.on('messageCreate', handleMessage);
+
+//-----------------------------------------GAME XÂY CẦU
+const bridges = new Map(); // Lưu trạng thái của trò chơi theo từng guild
+
+async function handleBridgeStart(interaction) {
+    const guildId = interaction.guildId;
+    
+    if (bridges.has(guildId)) {
+        return interaction.reply({ content: '🚧 Một cây cầu đã được xây! Dùng /build để tiếp tục.', ephemeral: true });
+    }
+    
+    bridges.set(guildId, { progress: 0, failed: false });
+    return interaction.reply('🌉 Trò chơi bắt đầu! Dùng /build để chọn vật liệu xây cầu.');
+}
+
+async function handleBridgeBuild(interaction) {
+    const guildId = interaction.guildId;
+    if (!bridges.has(guildId)) {
+        return interaction.reply({ content: '❌ Chưa có trò chơi nào đang diễn ra. Dùng /bridge để bắt đầu!', ephemeral: true });
+    }
+
+    const game = bridges.get(guildId);
+    if (game.failed) {
+        return interaction.reply({ content: '💥 Cây cầu đã sập! Dùng /bridge để bắt đầu lại.', ephemeral: true });
+    }
+
+    // Chọn ngẫu nhiên kết quả thành công hoặc thất bại
+    const success = Math.random() > 0.3;
+    if (success) {
+        game.progress += 1;
+        if (game.progress >= 5) {
+            bridges.delete(guildId);
+            return interaction.reply('🎉 Bạn đã xây xong cây cầu thành công!');
+        }
+        return interaction.reply(`✅ Bạn đã thêm một phần vào cầu! Tiến độ: ${game.progress}/5`);
+    } else {
+        game.failed = true;
+        return interaction.reply('💀 Bạn đã chọn vật liệu sai! Cầu sập! Dùng /bridge để thử lại.');
+    }
+}
+
+//-------------------------------------COI TAROT
+const tarotCards = [
+    { name: 'The Fool', meaning: 'Khởi đầu mới, sự ngây thơ, tiềm năng.' },
+    { name: 'The Magician', meaning: 'Sáng tạo, tập trung, biến ước mơ thành hiện thực.' },
+    { name: 'The High Priestess', meaning: 'Trực giác, bí ẩn, sự khôn ngoan.' },
+    { name: 'The Empress', meaning: 'Nuôi dưỡng, sáng tạo, tràn đầy năng lượng.' },
+    { name: 'The Emperor', meaning: 'Lãnh đạo, quyền lực, kiểm soát.' },
+    { name: 'The Hierophant', meaning: 'Truyền thống, niềm tin, học hỏi.' },
+    { name: 'The Lovers', meaning: 'Tình yêu, sự gắn kết, lựa chọn khó khăn.' },
+    { name: 'The Chariot', meaning: 'Chiến thắng, ý chí mạnh mẽ, sự tiến bộ.' },
+    { name: 'Strength', meaning: 'Sức mạnh nội tại, kiên nhẫn, kiểm soát bản thân.' },
+    { name: 'The Hermit', meaning: 'Sự cô độc, tìm kiếm ý nghĩa, soi sáng tâm hồn.' },
+    { name: 'Wheel of Fortune', meaning: 'Số phận, thay đổi, cơ hội bất ngờ.' },
+    { name: 'Justice', meaning: 'Công lý, sự cân bằng, nhân quả.' },
+    { name: 'The Hanged Man', meaning: 'Hi sinh, thay đổi quan điểm, nhìn nhận khác đi.' },
+    { name: 'Death', meaning: 'Kết thúc, sự thay đổi lớn, tái sinh.' },
+    { name: 'Temperance', meaning: 'Sự hòa hợp, cân bằng, kiên nhẫn.' },
+    { name: 'The Devil', meaning: 'Cám dỗ, bị trói buộc, dục vọng.' },
+    { name: 'The Tower', meaning: 'Sụp đổ bất ngờ, thay đổi mạnh mẽ, cú sốc.' },
+    { name: 'The Star', meaning: 'Hy vọng, niềm tin, sự phục hồi.' },
+    { name: 'The Moon', meaning: 'Ảo tưởng, sợ hãi, trực giác.' },
+    { name: 'The Sun', meaning: 'Hạnh phúc, thành công, sự rõ ràng.' },
+    { name: 'Judgement', meaning: 'Sự thức tỉnh, đánh giá lại, bước ngoặt.' },
+    { name: 'The World', meaning: 'Hoàn thành, trọn vẹn, thành tựu.' }
+];
+
+
+// Hàm xử lý lệnh Tarot
+async function handleTarotCommand(interaction) {
+    const type = interaction.options.getString('type');
+    const card = tarotCards[Math.floor(Math.random() * tarotCards.length)];
+
+    let typeText = '';
+    if (type === 'past') typeText = '🔙 Quá khứ';
+    if (type === 'present') typeText = '🔰 Hiện tại';
+    if (type === 'future') typeText = '🔮 Tương lai';
+
+    await interaction.reply(`🃏 **Lá bài của bạn:** **${card.name}**\n${typeText}: ${card.meaning}`);
+}
+
 client.login(process.env.DISCORD_TOKEN); 
